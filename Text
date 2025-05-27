@@ -88,4 +88,40 @@ Restart Handling	If APS re-runs a failed job, the script avoids processing alrea
 
 Summary
 
-This script automates and standardizes file monitoring, which is critical for APS-based reconciliation workflows in BP2S. It reduces manual errors, ensures job dependencies are respected, and supports better reporting and auditing — making reconciliation faster, more reliable, and traceable.
+This script automates and standardizes file monitoring, which is critical for APS-based reconciliation workflows in BP2S. It reduces manual errors, ensures job dependencies are respected, and supports better reporting and auditing — making reconciliation faster, more reliable, and traceable
+
+
+1. os – Provides functions to interact with the operating system (e.g., file paths, directories).
+
+
+2. sys – Allows interaction with the Python runtime environment (e.g., system exit, standard input/output).
+
+
+3. glob – Enables pattern matching for file name searches using wildcards.
+
+
+4. time – Provides time-related functions like getting current time or delays (sleep).
+
+
+5. logging – Facilitates logging messages to files or console with different severity levels.
+
+
+6. datetime – Handles date and time formatting, comparisons, and conversions.
+
+
+7. argparse – Parses command-line arguments provided to the script.
+
+
+8. re – Offers regular expression matching and substitution for string sanitization.
+
+
+9. openpyxl – Allows reading and writing Excel (.xlsx) files in Python.
+
+
+10. openpyxl.styles.Font – Customizes font styles in Excel cells.
+
+
+11. openpyxl.styles.PatternFill – Applies background fill color in Excel cells.
+
+
+12. openpyxl.utils.get_column_letter – Converts Excel column indexes to letter names (e.g., 1 → A)..
