@@ -1,1 +1,105 @@
-The watchdog library in Python is used to observe and respond to file system changes in real time. It continuously watches specified directories and triggers custom actions (via event handlers) when files or folders are created, modified, deleted, or moved. It’s especially useful for building automated file monitoring, backup systems, or audit logging in production environments.
+Objective:
+
+You are building a file monitoring utility that can:
+
+1. Check for file presence in a given directory that matches a pattern.
+
+
+2. Support two modes:
+
+fm (File Monitor): Check if at least one matching file has arrived within a given time window.
+
+cfm (Count File Monitor): Check if an exact number of files have arrived within the time window.
+
+
+
+3. Log the entire monitoring process in a detailed log file, with timestamps and statuses.
+
+
+4. Optionally generate Excel summaries of file statuses (although the implementation of this part seems incomplete).
+
+
+5. Handle command-line arguments and validate them thoroughly before starting the monitoring process.
+
+
+
+
+---
+
+Inputs via CLI:
+
+You expect users to provide arguments like:
+
+file_pattern_path: pattern like C:/data/*.txt
+
+--time_interval: how recent the file creation time must be (in minutes)
+
+--run_time: how long to run the monitoring loop
+
+--mode: either fm or cfm
+
+--accepted_file_count: only required for cfm mode
+
+--log_file_path: where the log should be saved
+
+
+
+---
+
+Functional Behavior:
+
+In fm mode, the script:
+
+Monitors the specified directory for any files matching the pattern.
+
+Logs the creation time of found files.
+
+Exits early if any file is found.
+
+
+In cfm mode, the script:
+
+Monitors for an exact number of files within the time interval.
+
+Logs each file and checks if the number of files equals accepted_file_count.
+
+Exits early if the count matches.
+
+
+
+
+---
+
+Other Features:
+
+Uses a custom dual-output logger that logs both to the console and to a file.
+
+Has validation checks for all required arguments.
+
+Gracefully handles missing directories or pattern mismatches.
+
+Attempts to provide readable logging output with timestamps.
+
+
+
+---
+
+Issues Noted:
+
+There are many syntax and formatting problems in the code:
+
+Typos like Import, isport, definit, setup logger, If instead of if, etc.
+
+Incorrect or malformed function names: write excel_summary, count_file_monitor, etc.
+
+Misplaced parentheses and string formatting issues.
+
+Missing or incorrect use of colons (:), indentation, and brackets.
+
+
+
+---
+
+Conclusion:
+
+This script is meant to monitor file arrival in real-time, ensure compliance with expected patterns or counts, log the activity, and possibly generate reports. However, it needs cleaning up and debugging to be runnable and maintainable.
