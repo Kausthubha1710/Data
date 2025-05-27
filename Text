@@ -1,105 +1,91 @@
-Objective:
-
-You are building a file monitoring utility that can:
-
-1. Check for file presence in a given directory that matches a pattern.
+is used in all recons (reconciliations) of BP2S (BNP Paribas Securities Services), and you're asking how it ties into APS (Automated Processing Systems), here's a clear breakdown of:
 
 
-2. Support two modes:
+---
 
-fm (File Monitor): Check if at least one matching file has arrived within a given time window.
+Problems Solved by the Code
 
-cfm (Count File Monitor): Check if an exact number of files have arrived within the time window.
+1. Automated File Arrival Verification
 
+Problem: Manual checking of whether expected files have arrived on time in APS job chains is error-prone.
 
+Solution: The script automatically monitors directories and verifies whether:
 
-3. Log the entire monitoring process in a detailed log file, with timestamps and statuses.
+At least one file (fm mode), or
 
-
-4. Optionally generate Excel summaries of file statuses (although the implementation of this part seems incomplete).
-
-
-5. Handle command-line arguments and validate them thoroughly before starting the monitoring process.
+A specific number of files (cfm mode) have arrived within a defined time window.
 
 
 
 
 ---
 
-Inputs via CLI:
+2. Time-Bound Monitoring
 
-You expect users to provide arguments like:
+Problem: APS jobs need to wait for files but cannot afford indefinite delays.
 
-file_pattern_path: pattern like C:/data/*.txt
-
---time_interval: how recent the file creation time must be (in minutes)
-
---run_time: how long to run the monitoring loop
-
---mode: either fm or cfm
-
---accepted_file_count: only required for cfm mode
-
---log_file_path: where the log should be saved
+Solution: The run_time parameter ensures monitoring ends within a strict duration. If files don’t arrive on time, it logs failure and exits.
 
 
 
 ---
 
-Functional Behavior:
+3. Validation of Expected Files
 
-In fm mode, the script:
+Problem: Missing or extra files can cause reconciliation mismatches.
 
-Monitors the specified directory for any files matching the pattern.
-
-Logs the creation time of found files.
-
-Exits early if any file is found.
+Solution: The cfm mode ensures exact match with expected file counts, preventing over/under-processing.
 
 
-In cfm mode, the script:
 
-Monitors for an exact number of files within the time interval.
+---
 
-Logs each file and checks if the number of files equals accepted_file_count.
+4. Centralized Logging
 
-Exits early if the count matches.
+Problem: It’s hard to trace file arrivals in a complex APS environment with many dependencies.
+
+Solution: The logging system writes detailed logs to a file (and console), including:
+
+Timestamp
+
+File pattern
+
+Matching file names
+
+Arrival times
+
+PASS/FAIL status
 
 
 
 
 ---
 
-Other Features:
+5. Directory Structure Awareness
 
-Uses a custom dual-output logger that logs both to the console and to a file.
+Problem: APS can crash or raise alerts if monitored directories don’t exist.
 
-Has validation checks for all required arguments.
-
-Gracefully handles missing directories or pattern mismatches.
-
-Attempts to provide readable logging output with timestamps.
+Solution: The script checks if the directory exists before monitoring, logs if it's missing, and exits gracefully (no crash).
 
 
 
 ---
 
-Issues Noted:
+Usefulness in APS Context
 
-There are many syntax and formatting problems in the code:
+Use Case in APS	How the Script Helps
 
-Typos like Import, isport, definit, setup logger, If instead of if, etc.
-
-Incorrect or malformed function names: write excel_summary, count_file_monitor, etc.
-
-Misplaced parentheses and string formatting issues.
-
-Missing or incorrect use of colons (:), indentation, and brackets.
+File-based Triggers	Ensures APS can trigger downstream jobs only after correct files are detected.
+Job Dependency Control	Avoids false triggers by validating file presence/count.
+Night Batch Monitoring	Ensures all EOD (End-of-Day) files are received and processed timely.
+Audit & Compliance	Keeps audit trail with timestamped logs for SLA enforcement and compliance reports.
+Error Reporting	Logs “FAILURE” when files are missing or counts mismatch, which APS can parse and alert on.
+Restart Handling	If APS re-runs a failed job, the script avoids processing already-arrived files again, using timestamps.
 
 
 
 ---
 
-Conclusion:
+Summary
 
-This script is meant to monitor file arrival in real-time, ensure compliance with expected patterns or counts, log the activity, and possibly generate reports. However, it needs cleaning up and debugging to be runnable and maintainable.
+This script automates and standardizes file monitoring, which is critical for APS-based reconciliation workflows in BP2S. It reduces manual errors, ensures job dependencies are respected, and supports better reporting and auditing — making reconciliation faster, more reliable, and traceable.
