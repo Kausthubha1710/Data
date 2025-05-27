@@ -1,1 +1,1 @@
-
+The watchdog library in Python is used to observe and respond to file system changes in real time. It continuously watches specified directories and triggers custom actions (via event handlers) when files or folders are created, modified, deleted, or moved. It’s especially useful for building automated file monitoring, backup systems, or audit logging in production environments.
