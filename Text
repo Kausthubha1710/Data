@@ -1,127 +1,180 @@
-is used in all recons (reconciliations) of BP2S (BNP Paribas Securities Services), and you're asking how it ties into APS (Automated Processing Systems), here's a clear breakdown of:
+Project Title:
+
+Automated File Monitoring and Reporting Dashboard
 
 
 ---
 
-Problems Solved by the Code
+Problem Statement:
 
-1. Automated File Arrival Verification
-
-Problem: Manual checking of whether expected files have arrived on time in APS job chains is error-prone.
-
-Solution: The script automatically monitors directories and verifies whether:
-
-At least one file (fm mode), or
-
-A specific number of files (cfm mode) have arrived within a defined time window.
-
-
+In data-sensitive environments, it's critical to ensure that all expected files arrive on time and in the correct directories. However, manually verifying the presence, arrival time, and correctness of numerous files across multiple locations is inefficient and error-prone. There is a need for an automated system to monitor, validate, and report file delivery status with a clear, accessible summary for operational teams.
 
 
 ---
 
-2. Time-Bound Monitoring
+Details of the Problem:
 
-Problem: APS jobs need to wait for files but cannot afford indefinite delays.
+Key Issues:
 
-Solution: The run_time parameter ensures monitoring ends within a strict duration. If files don’t arrive on time, it logs failure and exits.
+File Delivery Tracking: Teams often expect multiple files daily across different directories, but lack visibility into whether files have arrived on time.
 
+Manual Effort: Checking file presence and logging metadata like creation time manually is time-consuming.
 
+Lack of Centralized Reporting: There’s no easy way to track the delivery status of all files in one place.
 
----
+Delayed/Missing Files: When files are delayed or missing, the downstream systems or analysts often don’t get alerted immediately.
 
-3. Validation of Expected Files
-
-Problem: Missing or extra files can cause reconciliation mismatches.
-
-Solution: The cfm mode ensures exact match with expected file counts, preventing over/under-processing.
+Accessibility: Stakeholders want a simple report they can open and understand without using additional tools or apps.
 
 
 
 ---
 
-4. Centralized Logging
+Solution Overview:
 
-Problem: It’s hard to trace file arrivals in a complex APS environment with many dependencies.
+The project provides an automated Python script that:
 
-Solution: The logging system writes detailed logs to a file (and console), including:
+Reads a configuration of expected files, including their paths and expected arrival times.
 
-Timestamp
+Checks if each file exists and verifies its creation time.
 
-File pattern
+Updates the predefined file list with actual timestamps to keep it current.
 
-Matching file names
+Generates per-file .txt summary reports.
 
-Arrival times
+Compiles all results into a dashboard-style Excel file, with:
 
-PASS/FAIL status
+File names and paths
+
+Actual and expected arrival times
+
+Status marked as OK, NOK, or Delayed
+
+Hyperlinks to detailed .txt summaries
+
+Conditional formatting for easy visual identification
+
+
+
+
+---
+
+Solution Provided:
+
+Workflow:
+
+1. Configuration Loading:
+
+Reads from config.txt to get paths for input list, output folder, and Excel dashboard.
+
+
+
+2. File Monitoring Logic:
+
+Loads predefinedfiles.txt (tab-separated) with:
+
+File name
+
+Expected path
+
+Expected creation/arrival time
+
+
+For each entry, checks:
+
+Whether the file exists.
+
+Whether it arrived before the expected time.
+
+Updates actual creation time if file is found.
+
+
+
+
+3. Summary Generation:
+
+For every file, creates a .txt summary capturing:
+
+File name
+
+Status (OK, NOK, Delayed)
+
+Creation timestamp
+
+Expected arrival time
+
+Full file path
+
+
+
+
+4. Excel Dashboard Creation:
+
+Compiles all results into a single dashboard using pandas and xlsxwriter
+
+Adds conditional formatting:
+
+Green for OK
+
+Red for NOK
+
+Grey for N/A
+
+
+Adds clickable hyperlinks to summary .txt files using file:/// links
+
+
+
+5. Output:
+
+Static .xlsx dashboard
+
+Text summaries in a subfolder
+
+Updated predefinedfiles.txt for future runs
+
 
 
 
 
 ---
 
-5. Directory Structure Awareness
+Technologies Used:
 
-Problem: APS can crash or raise alerts if monitored directories don’t exist.
+Technology	Purpose
 
-Solution: The script checks if the directory exists before monitoring, logs if it's missing, and exits gracefully (no crash).
-
-
-
----
-
-Usefulness in APS Context
-
-Use Case in APS	How the Script Helps
-
-File-based Triggers	Ensures APS can trigger downstream jobs only after correct files are detected.
-Job Dependency Control	Avoids false triggers by validating file presence/count.
-Night Batch Monitoring	Ensures all EOD (End-of-Day) files are received and processed timely.
-Audit & Compliance	Keeps audit trail with timestamped logs for SLA enforcement and compliance reports.
-Error Reporting	Logs “FAILURE” when files are missing or counts mismatch, which APS can parse and alert on.
-Restart Handling	If APS re-runs a failed job, the script avoids processing already-arrived files again, using timestamps.
+Python 3	Core scripting and automation
+Pandas	Data manipulation and Excel generation
+XlsxWriter	Excel dashboard formatting and hyperlinking
+os, datetime, urllib	File path handling, timestamps, URL-safe filenames
+Text files (.txt)	Configuration and summary reports
+Excel (.xlsx)	Final output dashboard
+Windows/Linux (Local or Server)	Execution environment
 
 
 
 ---
 
-Summary
+Deployment Flexibility:
 
-This script automates and standardizes file monitoring, which is critical for APS-based reconciliation workflows in BP2S. It reduces manual errors, ensures job dependencies are respected, and supports better reporting and auditing — making reconciliation faster, more reliable, and traceable
+Runs locally or on a shared server
 
+Can be scheduled via Windows Task Scheduler or Linux cron
 
-1. os – Provides functions to interact with the operating system (e.g., file paths, directories).
-
-
-2. sys – Allows interaction with the Python runtime environment (e.g., system exit, standard input/output).
+Outputs can be stored on network drives, SharePoint, or cloud-shared folders for team-wide access
 
 
-3. glob – Enables pattern matching for file name searches using wildcards.
+
+---
+
+Benefits:
+
+Centralized file status reporting
+
+Quick visibility into delays or missing files
+
+Accessible reports without additional software
+
+Easily extendable or integrable with other systems
 
 
-4. time – Provides time-related functions like getting current time or delays (sleep).
-
-
-5. logging – Facilitates logging messages to files or console with different severity levels.
-
-
-6. datetime – Handles date and time formatting, comparisons, and conversions.
-
-
-7. argparse – Parses command-line arguments provided to the script.
-
-
-8. re – Offers regular expression matching and substitution for string sanitization.
-
-
-9. openpyxl – Allows reading and writing Excel (.xlsx) files in Python.
-
-
-10. openpyxl.styles.Font – Customizes font styles in Excel cells.
-
-
-11. openpyxl.styles.PatternFill – Applies background fill color in Excel cells.
-
-
-12. openpyxl.utils.get_column_letter – Converts Excel column indexes to letter names (e.g., 1 → A)..
