@@ -116,3 +116,134 @@ def scan_and_generate(config):
 if __name__ == "__main__":
     config = load_config('config.txt')
     scan_and_generate(config)
+
+
+
+app.py
+
+
+
+from flask import Flask, render_template, request
+import pandas as pd
+import os
+import urllib.parse
+from datetime import datetime
+
+app = Flask(__name__)  # Fixed missing '='
+
+# Load config
+def load_config(config_file):
+    config = {}
+    with open(config_file, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if line and '=' in line:
+                key, value = line.split('=', 1)
+                config[key.strip()] = value.strip()
+    return config
+
+config = load_config('config.txt')
+EXCEL_FILE_PATH = config['EXCEL_FILE_PATH']
+
+# Get expected arrival time from dashboard
+def get_expected_arrival_time(path):
+    df = pd.read_excel(EXCEL_FILE_PATH, sheet_name='Dashboard')
+    df['Directory_norm'] = df['Directory'].apply(lambda p: os.path.normpath(p))
+    norm_path = os.path.normpath(path)
+    matched_rows = df[df['Directory_norm'] == norm_path]
+    if not matched_rows.empty:
+        val = matched_rows.iloc[0]['Expected Arrival Time']
+        try:
+            dt_str = val.replace(' IST', '')
+            return datetime.strptime(dt_str, '%Y-%m-%d %H:%M:%S')
+        except Exception:
+            return None
+    return None
+
+@app.route('/')
+def index():
+    search_query = request.args.get('search', '').lower()
+    df = pd.read_excel(EXCEL_FILE_PATH, sheet_name='Dashboard')
+    df['Directory'] = df['Directory'].apply(lambda p: os.path.normpath(p))
+
+    if search_query:
+        df = df[df['File name'].str.lower().str.contains(search_query)]
+
+    if 'Click to view' in df.columns:
+        df.drop(columns=['Click to view'], inplace=True)
+
+    df['Click to view'] = df['Directory'].apply(
+        lambda p: f'<a href="/file_summary?path={urllib.parse.quote(p)}" target="_blank">View</a>'
+    )
+
+    def highlight_status(row):
+        styles = [''] * len(row)
+
+        # Prioritize NOK case without depending on time parsing
+        if row['File received (OK/NOK)'] == 'NOK':
+            styles = ['background-color: salmon'] * len(row)
+        else:
+            try:
+                actual_time = datetime.strptime(row['time (IST)'].replace(' IST', ''), '%Y-%m-%d %H:%M:%S')
+                expected_time = datetime.strptime(row['Expected Arrival Time'].replace(' IST', ''), '%Y-%m-%d %H:%M:%S')
+                
+                if actual_time > expected_time:
+                    styles = ['background-color: #FFC000'] * len(row)  # Late
+                else:
+                    styles = ['background-color: lightgreen'] * len(row)  # On time
+            except Exception:
+                pass  # Invalid time values — leave default styles
+
+        return styles
+
+
+
+
+    styled_df = df.style.apply(highlight_status, axis=1)
+    table_html = styled_df.to_html(escape=False)
+
+    return render_template('dashboard.html', table_html=table_html)
+
+@app.route('/file_summary')
+def file_summary():
+    file_path = request.args.get('path')
+    if not file_path:
+        return "No file path provided."
+
+    decoded_path = os.path.normpath(urllib.parse.unquote(file_path))
+    expected_time = get_expected_arrival_time(decoded_path)
+
+    if os.path.exists(decoded_path):
+        creation_time_epoch = os.path.getctime(decoded_path)
+        creation_time = datetime.fromtimestamp(creation_time_epoch)
+        formatted_time = creation_time.strftime("%Y-%m-%d %H:%M:%S")
+
+        if expected_time:
+            if creation_time > expected_time:
+                delay = creation_time - expected_time
+                delay_str = str(delay).split('.')[0]
+                status_text = f"Delayed by {delay_str}"
+                status_color = "#FFC000"  # Yellow
+            else:
+                status_text = "Available"
+                status_color = "lightgreen"
+        else:
+            status_text = "Available"
+            status_color = "lightgreen"
+    else:
+        status_text = "File not found"
+        status_color = "salmon"
+
+    summary = f"""
+    <h2>File Summary</h2>
+    <p><strong>File:</strong> {os.path.basename(decoded_path)}</p>
+    <p><strong>Status:</strong> <span style="background-color: {status_color}; padding: 2px 6px; border-radius: 4px;">{status_text}</span></p>
+    <p><strong>Arrival Time:</strong> {formatted_time if os.path.exists(decoded_path) else 'N/A'}</p>
+    <p><strong>Expected Arrival Time:</strong> {expected_time.strftime('%Y-%m-%d %H:%M:%S') if expected_time else 'N/A'}</p>
+    <p><strong>Full Path:</strong> {decoded_path}</p>
+    """
+    return summary
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
+
