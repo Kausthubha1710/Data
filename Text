@@ -245,19 +245,18 @@ def file_summary():
     return summary
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000,debug=True)
 
 
 
 
 @app.route('/file_summary')
 def file_summary():
-    file_path = request.args.get('path', '')  # might be empty if missing
-    filename = request.args.get('filename', 'Unknown')
+    # Always use provided filename from the dashboard
+    filename = request.args.get('filename', '').strip()
+    file_path = request.args.get('path', '').strip()
 
-    # Normalize path if present
     decoded_path = os.path.normpath(urllib.parse.unquote(file_path)) if file_path else ''
-
     expected_time = get_expected_arrival_time(decoded_path) if decoded_path else None
 
     if decoded_path and os.path.exists(decoded_path):
@@ -270,7 +269,7 @@ def file_summary():
                 delay = creation_time - expected_time
                 delay_str = str(delay).split('.')[0]
                 status_text = f"Delayed by {delay_str}"
-                status_color = "#FFC000"  # Yellow
+                status_color = "#FFC000"
             else:
                 status_text = "Available"
                 status_color = "lightgreen"
@@ -278,7 +277,6 @@ def file_summary():
             status_text = "Available"
             status_color = "lightgreen"
     else:
-        # File missing or path empty
         status_text = "File not found"
         status_color = "salmon"
         formatted_time = 'N/A'
@@ -292,3 +290,51 @@ def file_summary():
     <p><strong>Full Path:</strong> {decoded_path if decoded_path else 'N/A'}</p>
     """
     return summary
+
+
+
+
+@app.route('/')
+def index():
+    search_query = request.args.get('search', '').lower()
+    df = pd.read_excel(EXCEL_FILE_PATH, sheet_name='Dashboard')
+
+    # Normalize directory path, replace "File Not Found" with empty string
+    df['Directory'] = df['Directory'].apply(lambda p: os.path.normpath(p) if p != 'File Not Found' else '')
+
+    if search_query:
+        df = df[df['File name'].str.lower().str.contains(search_query)]
+
+    # Remove previous link column if present
+    if 'Click to view' in df.columns:
+        df.drop(columns=['Click to view'], inplace=True)
+
+    def make_link(row):
+        filename = row['File name']
+        directory = row['Directory']
+        # Pass both filename and directory even if directory is empty
+        return f'<a href="/file_summary?filename={urllib.parse.quote(filename)}&path={urllib.parse.quote(directory)}" target="_blank">View</a>'
+
+    df['Click to view'] = df.apply(make_link, axis=1)
+
+    # Apply conditional formatting
+    def highlight_status(row):
+        styles = [''] * len(row)
+        if row['File received (OK/NOK)'] == 'NOK':
+            styles = ['background-color: salmon'] * len(row)
+        else:
+            try:
+                actual_time = datetime.strptime(row['time (IST)'].replace(' IST', ''), '%Y-%m-%d %H:%M:%S')
+                expected_time = datetime.strptime(row['Expected Arrival Time'].replace(' IST', ''), '%Y-%m-%d %H:%M:%S')
+                if actual_time > expected_time:
+                    styles = ['background-color: #FFC000'] * len(row)
+                else:
+                    styles = ['background-color: lightgreen'] * len(row)
+            except Exception:
+                pass
+        return styles
+
+    styled_df = df.style.apply(highlight_status, axis=1)
+    table_html = styled_df.to_html(escape=False)
+
+    return render_template('dashboard.html', table_html=table_html)
