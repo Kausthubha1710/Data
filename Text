@@ -257,11 +257,14 @@ def file_summary():
         return "No file path provided."
 
     decoded_path = os.path.normpath(urllib.parse.unquote(file_path))  
+
+    filename = os.path.basename(decoded_path) if decoded_path else 'Unknown file'
+
     expected_time = get_expected_arrival_time(decoded_path)  
 
-    formatted_time = 'N/A'  # Default if file not found
+    formatted_time = 'N/A'  # Default
 
-    if os.path.exists(decoded_path):  
+    if decoded_path and os.path.exists(decoded_path):  
         creation_time_epoch = os.path.getctime(decoded_path)  
         creation_time = datetime.fromtimestamp(creation_time_epoch)  
         formatted_time = creation_time.strftime("%Y-%m-%d %H:%M:%S")  
@@ -284,10 +287,10 @@ def file_summary():
 
     summary = f"""  
     <h2>File Summary</h2>  
-    <p><strong>File:</strong> {os.path.basename(decoded_path)}</p>  
+    <p><strong>File:</strong> {filename}</p>  
     <p><strong>Status:</strong> <span style="background-color: {status_color}; padding: 2px 6px; border-radius: 4px;">{status_text}</span></p>  
     <p><strong>Arrival Time:</strong> {formatted_time}</p>  
     <p><strong>Expected Arrival Time:</strong> {expected_time.strftime('%Y-%m-%d %H:%M:%S') if expected_time else 'N/A'}</p>  
-    <p><strong>Full Path:</strong> {decoded_path}</p>  
+    <p><strong>Full Path:</strong> {decoded_path if decoded_path else 'N/A'}</p>  
     """
     return summary
