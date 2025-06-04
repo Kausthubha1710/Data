@@ -254,20 +254,27 @@ if __name__ == "__main__":
 def index():
     search_query = request.args.get('search', '').lower()
     df = pd.read_excel(EXCEL_FILE_PATH, sheet_name='Dashboard')
+    
     df['Directory'] = df['Directory'].apply(lambda p: os.path.normpath(p))
 
     if search_query:
         df = df[df['File name'].str.lower().str.contains(search_query)]
 
+    # Remove previous column if it exists
     if 'Click to view' in df.columns:
         df.drop(columns=['Click to view'], inplace=True)
 
-    # ✅ Fixed: Construct full file path
+    # Updated logic: link to summary only if file is missing
     df['Click to view'] = df.apply(
-        lambda row: f'<a href="/file_summary?path={urllib.parse.quote(os.path.join(row["Directory"], row["File name"]))}" target="_blank">View</a>',
+        lambda row: (
+            f'<a href="/file_summary?path={urllib.parse.quote(os.path.join(row["Directory"], row["File name"]))}" target="_blank">View</a>'
+            if not os.path.exists(os.path.join(row['Directory'], row['File name'])) else
+            f'<a href="file:///{urllib.parse.quote(os.path.normpath(row["Directory"]))}" target="_blank">View</a>'
+        ),
         axis=1
     )
 
+    # Highlighting logic
     def highlight_status(row):
         styles = [''] * len(row)
         if row['File received (OK/NOK)'] == 'NOK':
@@ -277,14 +284,13 @@ def index():
                 actual_time = datetime.strptime(row['time (IST)'].replace(' IST', ''), '%Y-%m-%d %H:%M:%S')
                 expected_time = datetime.strptime(row['Expected Arrival Time'].replace(' IST', ''), '%Y-%m-%d %H:%M:%S')
                 if actual_time > expected_time:
-                    styles = ['background-color: #FFC000'] * len(row)
+                    styles = ['background-color: yellow'] * len(row)
                 else:
                     styles = ['background-color: lightgreen'] * len(row)
             except Exception:
-                pass
+                styles = [''] * len(row)
         return styles
 
-    styled_df = df.style.apply(highlight_status, axis=1)
-    table_html = styled_df.to_html(escape=False)
+    styles = df.apply(highlight_status, axis=1)
 
-    return render_template('dashboard.html', table_html=table_html)
+    return render_template('index.html', tables=[df.to_html(escape=False, index=False)], styles=styles
