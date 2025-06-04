@@ -252,12 +252,12 @@ if __name__ == "__main__":
 
 @app.route('/file_summary')
 def file_summary():
-    # Always use provided filename from the dashboard
     filename = request.args.get('filename', '').strip()
     file_path = request.args.get('path', '').strip()
-
     decoded_path = os.path.normpath(urllib.parse.unquote(file_path)) if file_path else ''
-    expected_time = get_expected_arrival_time(decoded_path) if decoded_path else None
+
+    # 🔄 Now also pass filename to handle missing path case
+    expected_time = get_expected_arrival_time(decoded_path, filename)
 
     if decoded_path and os.path.exists(decoded_path):
         creation_time_epoch = os.path.getctime(decoded_path)
@@ -292,49 +292,21 @@ def file_summary():
     return summary
 
 
+def get_expected_arrival_time(file_path='', filename=''):
+    """Returns expected arrival time from Excel based on path or filename."""
+    try:
+        df = pd.read_excel(EXCEL_FILE_PATH, sheet_name='Dashboard')
 
-
-@app.route('/')
-def index():
-    search_query = request.args.get('search', '').lower()
-    df = pd.read_excel(EXCEL_FILE_PATH, sheet_name='Dashboard')
-
-    # Normalize directory path, replace "File Not Found" with empty string
-    df['Directory'] = df['Directory'].apply(lambda p: os.path.normpath(p) if p != 'File Not Found' else '')
-
-    if search_query:
-        df = df[df['File name'].str.lower().str.contains(search_query)]
-
-    # Remove previous link column if present
-    if 'Click to view' in df.columns:
-        df.drop(columns=['Click to view'], inplace=True)
-
-    def make_link(row):
-        filename = row['File name']
-        directory = row['Directory']
-        # Pass both filename and directory even if directory is empty
-        return f'<a href="/file_summary?filename={urllib.parse.quote(filename)}&path={urllib.parse.quote(directory)}" target="_blank">View</a>'
-
-    df['Click to view'] = df.apply(make_link, axis=1)
-
-    # Apply conditional formatting
-    def highlight_status(row):
-        styles = [''] * len(row)
-        if row['File received (OK/NOK)'] == 'NOK':
-            styles = ['background-color: salmon'] * len(row)
+        if file_path:
+            match = df[df['Directory'].apply(lambda p: os.path.normpath(str(p))) == os.path.normpath(file_path)]
+        elif filename:
+            match = df[df['File name'].str.strip().str.lower() == filename.strip().lower()]
         else:
-            try:
-                actual_time = datetime.strptime(row['time (IST)'].replace(' IST', ''), '%Y-%m-%d %H:%M:%S')
-                expected_time = datetime.strptime(row['Expected Arrival Time'].replace(' IST', ''), '%Y-%m-%d %H:%M:%S')
-                if actual_time > expected_time:
-                    styles = ['background-color: #FFC000'] * len(row)
-                else:
-                    styles = ['background-color: lightgreen'] * len(row)
-            except Exception:
-                pass
-        return styles
+            return None
 
-    styled_df = df.style.apply(highlight_status, axis=1)
-    table_html = styled_df.to_html(escape=False)
-
-    return render_template('dashboard.html', table_html=table_html)
+        if not match.empty:
+            time_str = str(match.iloc[0]['Expected Arrival Time']).replace(" IST", "")
+            return pd.to_datetime(time_str)
+    except Exception as e:
+        print("Error:", e)
+        return None
