@@ -247,3 +247,74 @@ def file_summary():
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
 
+
+
+
+from flask import Flask, request, render_template_string
+import pandas as pd
+import os
+import urllib.parse
+from datetime import datetime
+
+app = Flask(__name__)
+
+EXCEL_FILE_PATH = r"C:\Users\hs9281\Downloads\files\dashboard.xlsx"
+
+@app.route('/')
+def index():
+    search_query = request.args.get('search', '').lower()
+
+    # Read and clean Excel file
+    df = pd.read_excel(EXCEL_FILE_PATH, sheet_name='Dashboard')
+    df.columns = df.columns.str.strip()  # Remove any extra spaces in column names
+
+    # Normalize path
+    if 'Directory' in df.columns:
+        df['Directory'] = df['Directory'].apply(lambda p: os.path.normpath(str(p)))
+
+    # Apply search filter
+    if search_query:
+        df = df[df['File name'].str.lower().str.contains(search_query)]
+
+    # Safely generate 'Click to view' column
+    if 'Click to view' in df.columns:
+        df.drop(columns=['Click to view'], inplace=True)
+
+    if 'Directory' in df.columns and 'File name' in df.columns:
+        df['Click to view'] = df.apply(
+            lambda row: f'<a href="/file_summary?path={urllib.parse.quote(os.path.join(str(row["Directory"]), str(row["File name"])))}" target="_blank">View</a>',
+            axis=1
+        )
+
+    # Conditional formatting for HTML rendering
+    def highlight_status(row):
+        style = [''] * len(row)
+        try:
+            if row['File received (OK/NOK)'] == 'NOK':
+                style = ['background-color: salmon'] * len(row)
+            elif 'Expected Arrival Time' in row and 'time (IST)' in row:
+                expected = datetime.strptime(row['Expected Arrival Time'].replace(' IST', ''), '%Y-%m-%d %H:%M:%S')
+                actual = datetime.strptime(row['time (IST)'].replace(' IST', ''), '%Y-%m-%d %H:%M:%S')
+                if actual > expected:
+                    style = ['background-color: salmon'] * len(row)
+                else:
+                    style = ['background-color: lightgreen'] * len(row)
+        except Exception:
+            pass
+        return style
+
+    styled_df = df.style.apply(highlight_status, axis=1).hide(axis='index').to_html(escape=False)
+
+    return render_template_string("""
+        <html>
+            <head><title>Dashboard</title></head>
+            <body>
+                <h2>Dashboard</h2>
+                <form method="get">
+                    <input type="text" name="search" placeholder="Search filename..." value="{{ request.args.get('search', '') }}">
+                    <button type="submit">Search</button>
+                </form>
+                {{ table | safe }}
+            </body>
+        </html>
+    """, table=styled_df)
