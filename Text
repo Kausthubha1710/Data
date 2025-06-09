@@ -310,3 +310,33 @@ def get_expected_arrival_time(file_path='', filename=''):
     except Exception as e:
         print("Error:", e)
         return None
+
+
+
+vba code
+
+
+Sub GenerateSummaryFile()
+    Dim fileName As String
+    Dim filePath As String
+    Dim fNum As Integer
+
+    fileName = "FileA_summary.txt" ' You can dynamically get this based on selection
+    filePath = ThisWorkbook.Path & "\Summaries\" & fileName
+
+    ' Create Summaries folder if not exists
+    If Dir(ThisWorkbook.Path & "\Summaries", vbDirectory) = "" Then
+        MkDir ThisWorkbook.Path & "\Summaries"
+    End If
+
+    ' Create the summary file
+    fNum = FreeFile
+    Open filePath For Output As #fNum
+    Print #fNum, "Summary for FileA"
+    Print #fNum, "Generated on: " & Now
+    Print #fNum, "Details: ..."
+    Close #fNum
+
+    ' Open the file
+    Shell "notepad.exe " & filePath, vbNormalFocus
+End Sub
