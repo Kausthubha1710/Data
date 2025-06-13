@@ -366,3 +366,49 @@ Sub GenerateSummaryOnClick()
     ' Open summary file in Notepad
     Shell "notepad.exe " & Chr(34) & summaryFile & Chr(34), vbNormalFocus
 End Sub
+
+
+
+
+import psutil
+import time
+import csv
+import os
+
+# Create output directory
+os.makedirs('performance_logs', exist_ok=True)
+
+# Output CSV file
+log_file = 'performance_logs/system_usage.csv'
+
+# Write headers if file doesn't exist
+if not os.path.exists(log_file):
+    with open(log_file, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['Timestamp', 'CPU (%)', 'Memory (MB)', 'Disk Read (MB)', 'Disk Write (MB)'])
+
+while True:
+    # CPU usage
+    cpu_percent = psutil.cpu_percent(interval=1)
+
+    # Memory usage
+    mem = psutil.virtual_memory()
+    memory_mb = mem.used / 1024 / 1024
+
+    # Disk IO usage
+    disk_io = psutil.disk_io_counters()
+    disk_read_mb = disk_io.read_bytes / 1024 / 1024
+    disk_write_mb = disk_io.write_bytes / 1024 / 1024
+
+    # Timestamp
+    timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+
+    # Write to CSV
+    with open(log_file, 'a', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow([timestamp, cpu_percent, memory_mb, disk_read_mb, disk_write_mb])
+
+    print(f"[{timestamp}] CPU: {cpu_percent}%, Memory: {memory_mb:.2f} MB, Disk Read: {disk_read_mb:.2f} MB, Disk Write: {disk_write_mb:.2f} MB")
+
+    # Log every 10 seconds
+    time.sleep(10)
