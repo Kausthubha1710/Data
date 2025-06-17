@@ -4,6 +4,9 @@ from datetime import datetime
 
 def load_config(config_file):
     config = {}
+    if not os.path.exists(config_file):
+        raise FileNotFoundError(f"Config file not found: {config_file}")
+    
     with open(config_file, 'r', encoding='utf-8') as f:
         for line in f:
             line = line.strip()
@@ -12,6 +15,23 @@ def load_config(config_file):
                 config[key.strip()] = value.strip()
     return config
 
+def get_all_drives():
+    drives = []
+    for drive in range(ord('A'), ord('Z') + 1):
+        drive_letter = chr(drive) + ":\\"
+        if os.path.exists(drive_letter):
+            drives.append(drive_letter)
+    return drives
+
+def read_input_paths(input_file):
+    if not input_file or not os.path.exists(input_file):
+        print("INPUT_FILE not found or not defined, using common user directories.")
+        return get_all_drives()
+    
+    with open(input_file, 'r', encoding='utf-8') as f:
+        paths = [line.strip() for line in f if line.strip() and os.path.exists(line.strip())]
+        return paths if paths else get_all_drives()
+
 def get_creation_time(path):
     try:
         return os.path.getctime(path)
@@ -19,70 +39,144 @@ def get_creation_time(path):
         return None
 
 def compile_patterns(pattern_str):
-    return [re.compile(p.strip()) for p in pattern_str.split(',') if p.strip()]
-
-def read_input_paths(input_file):
-    if not input_file or not os.path.exists(input_file):
-        return []
-    with open(input_file, 'r', encoding='utf-8') as f:
-        return [line.strip() for line in f if os.path.exists(line.strip())]
+    patterns = [p.strip() for p in pattern_str.split(',') if p.strip()]
+    return [re.compile(p) for p in patterns]
 
 def scan_and_generate(config):
     input_file = config.get('INPUT_FILE')
     output_dir = config.get('OUTPUT_DIR')
-    expected_time_raw = config.get('EXPECTED_ARRIVAL_TIME', '')
-    pattern_str = config.get('FILENAME_PATTERNS', '')
+    expected_arrival_time = config.get('EXPECTED_ARRIVAL_TIME', '')
+    pattern_str = config.get('FILENAME_PATTERNS')
+    
+    if not pattern_str:
+        raise ValueError("FILENAME_PATTERNS must be defined in config.txt")
+    
     compiled_patterns = compile_patterns(pattern_str)
-
+    
     if not output_dir or not os.path.isdir(output_dir):
+        print("OUTPUT_DIR not defined or invalid in config.txt. Using Downloads folder as fallback.")
         current_user = os.getlogin()
         output_dir = os.path.join("C:\\Users", current_user, "Downloads")
-
+    
     output_txt = os.path.join(output_dir, "ppredefinedfiles.txt")
     os.makedirs(output_dir, exist_ok=True)
-
-    # Load previous data by filename as key
-    previous_data = {}
+    
+    directories = read_input_paths(input_file)
+    
+    # Load existing entries - use both filename and full path for better matching
+    existing_data = {}
+    existing_by_filename = {}  # Secondary index by filename only
+    
     if os.path.exists(output_txt):
         with open(output_txt, 'r', encoding='utf-8') as f:
-            for line in f:
+            for line_num, line in enumerate(f, 1):
                 parts = line.strip().split('\t')
                 if len(parts) >= 4:
                     filename = parts[0]
-                    previous_data[filename] = parts
-
-    # Scan current filesystem
-    current_data = {}
-    directories = read_input_paths(input_file)
-    for base_dir in directories:
-        for dirpath, _, filenames in os.walk(base_dir):
-            if 'summaries' in dirpath.lower():
-                continue
+                    full_path = parts[2] if parts[2] != 'File Not Found' else f"missing_{line_num}"
+                    
+                    # Primary index by full path
+                    existing_data[full_path] = parts
+                    
+                    # Secondary index by filename for handling duplicates
+                    if filename not in existing_by_filename:
+                        existing_by_filename[filename] = []
+                    existing_by_filename[filename].append((full_path, parts))
+    
+    # Find current matching files - ensure no duplicates
+    current_files = {}
+    processed_files = set()  # Track processed files to avoid duplicates
+    
+    for root_dir in directories:
+        for dirpath, _, filenames in os.walk(root_dir):
+            if "summaries" in dirpath.lower():
+                continue  # Skip the "summaries" folder
+            
             for filename in filenames:
                 if any(p.match(filename) for p in compiled_patterns):
                     full_path = os.path.join(dirpath, filename)
+                    
+                    # Normalize path to avoid duplicates from path variations
+                    normalized_path = os.path.normpath(full_path)
+                    
+                    # Skip if we've already processed this exact file
+                    if normalized_path in processed_files:
+                        continue
+                    
+                    processed_files.add(normalized_path)
+                    
                     ctime = get_creation_time(full_path)
                     if ctime:
-                        actual_time = datetime.fromtimestamp(ctime).strftime('%Y-%m-%d %H:%M:%S')
-                        expected_time = f"{datetime.now().strftime('%Y-%m-%d')} {expected_time_raw}"
-                        current_data[filename] = [filename, actual_time, full_path, expected_time]
-
-    # Merge previous + current
-    all_filenames = set(previous_data) | set(current_data)
+                        actual_dt = datetime.fromtimestamp(ctime)
+                        actual_time = actual_dt.strftime("%Y-%m-%d %H:%M:%S")
+                        
+                        # Combine the current date with the fixed time from the config
+                        current_date = datetime.now().strftime("%Y-%m-%d")
+                        expected_time = f"{current_date} {expected_arrival_time}"
+                        
+                        current_files[normalized_path] = [filename, actual_time, normalized_path, expected_time]
+    
+    # Build final entries - handle duplicates intelligently
+    all_keys = set(existing_data.keys()).union(set(current_files.keys()))
     final_entries = []
-
-    for fname in sorted(all_filenames):
-        if fname in current_data:
-            final_entries.append('\t'.join(current_data[fname]))
+    processed_entries = set()  # Track to avoid duplicate entries
+    
+    for key in sorted(all_keys):
+        if key in current_files:
+            # File exists - use current data
+            entry = '\t'.join(current_files[key])
+            if entry not in processed_entries:
+                final_entries.append(entry)
+                processed_entries.add(entry)
         else:
-            prev = previous_data.get(fname, [fname, '', '', ''])
-            prev[1] = 'File Not Found'
-            prev[2] = 'File Not Found'
-            prev[3] = f"{datetime.now().strftime('%Y-%m-%d')} {expected_time_raw}"
-            final_entries.append('\t'.join(prev))
-
+            # File doesn't exist - check if it was previously tracked
+            if key in existing_data:
+                # File was previously tracked but now missing
+                previous = existing_data[key].copy()
+                filename = previous[0]  # Keep original filename
+                
+                # Create unique entry for missing file
+                missing_entry = [
+                    filename,
+                    'File Not Found',
+                    'File Not Found', 
+                    f"{datetime.now().strftime('%Y-%m-%d')} {expected_arrival_time}"
+                ]
+                
+                entry = '\t'.join(missing_entry)
+                if entry not in processed_entries:
+                    final_entries.append(entry)
+                    processed_entries.add(entry)
+    
+    # Remove any remaining duplicates by filename (keep the most recent entry)
+    final_unique_entries = []
+    filename_tracker = {}
+    
+    for entry in final_entries:
+        parts = entry.split('\t')
+        if len(parts) >= 4:
+            filename = parts[0]
+            
+            # If we haven't seen this filename, or this is a more recent/complete entry
+            if filename not in filename_tracker:
+                filename_tracker[filename] = entry
+            else:
+                # Keep the entry that's not "File Not Found" if available
+                current_entry = filename_tracker[filename].split('\t')
+                if current_entry[1] == 'File Not Found' and parts[1] != 'File Not Found':
+                    filename_tracker[filename] = entry
+    
+    final_unique_entries = list(filename_tracker.values())
+    
+    # Write the updated file
     with open(output_txt, 'w', encoding='utf-8') as f:
-        for entry in final_entries:
+        for entry in sorted(final_unique_entries):
             f.write(entry + '\n')
+    
+    print(f"Updated ppredefinedfiles.txt saved to: {output_txt}")
+    print(f"Total unique files tracked: {len(final_unique_entries)}")
 
-    print(f"✅ Updated ppredefinedfiles.txt saved to: {output_txt}")
+# Entry Point
+if __name__ == "__main__":
+    config = load_config('config.txt')
+    scan_and_generate(config)
