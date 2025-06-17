@@ -158,28 +158,33 @@ if __name__ == "__main__":
 
 
 
+
 def scan_and_generate(config):
     input_file = config.get('INPUT_FILE')
     output_dir = config.get('OUTPUT_DIR')
     expected_arrival_time = config.get('EXPECTED_ARRIVAL_TIME', '')
     pattern_str = config.get('FILENAME_PATTERNS')
-    
+
     if not pattern_str:
         raise ValueError("FILENAME_PATTERNS must be defined in config.txt")
-    
+
     compiled_patterns = compile_patterns(pattern_str)
-    
+
+    # Use Downloads if OUTPUT_DIR is not defined or invalid
     if not output_dir or not os.path.isdir(output_dir):
-        print("OUTPUT_DIR not defined or invalid in config.txt. Using Downloads folder as fallback.")
-        current_user = os.getlogin()
+        try:
+            current_user = os.getlogin()
+        except Exception:
+            current_user = os.environ.get("USERNAME", "Public")
         output_dir = os.path.join("C:\\Users", current_user, "Downloads")
-    
-    output_txt = os.path.join(output_dir, "ppredefinedfiles.txt")
+        print(f"⚠ Using fallback OUTPUT_DIR: {output_dir}")
+
     os.makedirs(output_dir, exist_ok=True)
-    
+    output_txt = os.path.join(output_dir, "ppredefinedfiles.txt")
+
     directories = read_input_paths(input_file)
-    
-    # Load existing entries
+
+    # Load previous entries
     existing_files = {}
     if os.path.exists(output_txt):
         with open(output_txt, 'r', encoding='utf-8') as f:
@@ -188,10 +193,10 @@ def scan_and_generate(config):
                 if len(parts) >= 4:
                     filename = parts[0]
                     existing_files[filename] = parts
-    
-    print(f"Loaded {len(existing_files)} existing file records")
-    
-    # Find current matching files
+
+    print(f"📄 Loaded {len(existing_files)} existing records")
+
+    # Scan file system
     current_files = {}
     for root_dir in directories:
         if not os.path.exists(root_dir):
@@ -201,45 +206,41 @@ def scan_and_generate(config):
                 continue
             for filename in filenames:
                 if any(p.match(filename) for p in compiled_patterns):
-                    full_path = os.path.join(dirpath, filename)
                     if filename in current_files:
                         continue
+                    full_path = os.path.join(dirpath, filename)
                     ctime = get_creation_time(full_path)
                     if ctime:
                         actual_time = datetime.fromtimestamp(ctime).strftime("%Y-%m-%d %H:%M:%S")
                         expected_time = f"{datetime.now().strftime('%Y-%m-%d')} {expected_arrival_time}"
                         current_files[filename] = [filename, actual_time, full_path, expected_time]
-    
-    print(f"Found {len(current_files)} current matching files")
-    
-    # Merge existing and current
-    final_entries = []
+
+    print(f"✅ Found {len(current_files)} matching current files")
+
+    # Merge existing and current entries
     all_filenames = sorted(set(existing_files.keys()).union(current_files.keys()))
+    final_entries = []
+
     expected_time_now = f"{datetime.now().strftime('%Y-%m-%d')} {expected_arrival_time}"
-    
+
     for filename in all_filenames:
         if filename in current_files:
             final_entries.append(current_files[filename])
-            print(f"✓ Active: {filename}")
+            print(f"✔ Active: {filename}")
         else:
-            # Not found now
-            if filename in existing_files:
-                prev = existing_files[filename]
-                final_entry = [
-                    filename,
-                    "File Not Found",
-                    "File Not Found",
-                    expected_time_now
-                ]
-                final_entries.append(final_entry)
-                print(f"⚠ Missing: {filename}")
-    
-    # Save final list
+            final_entries.append([
+                filename,
+                "File Not Found",
+                "File Not Found",
+                expected_time_now
+            ])
+            print(f"⚠ Missing: {filename}")
+
+    # Write final output (create file if missing)
     with open(output_txt, 'w', encoding='utf-8') as f:
         for entry in final_entries:
             f.write('\t'.join(entry) + '\n')
-    
-    print(f"\n✅ Updated ppredefinedfiles.txt saved to: {output_txt}")
-    print(f"Total files tracked: {len(final_entries)}")
-    print(f"Active files: {len(current_files)}")
-    print(f"Missing files: {len(final_entries) - len(current_files)}")
+
+    print(f"\n✅ Updated ppredefinedfiles.txt at: {output_txt}")
+    print(f"🟢 Active files: {len(current_files)}")
+    print(f"🔴 Missing files: {len(final_entries) - len(current_files)}")
