@@ -151,3 +151,95 @@ def scan_and_generate(config):
 if __name__ == "__main__":
     config = load_config('config.txt')
     scan_and_generate(config)
+
+
+
+
+
+
+
+def scan_and_generate(config):
+    input_file = config.get('INPUT_FILE')
+    output_dir = config.get('OUTPUT_DIR')
+    expected_arrival_time = config.get('EXPECTED_ARRIVAL_TIME', '')
+    pattern_str = config.get('FILENAME_PATTERNS')
+    
+    if not pattern_str:
+        raise ValueError("FILENAME_PATTERNS must be defined in config.txt")
+    
+    compiled_patterns = compile_patterns(pattern_str)
+    
+    if not output_dir or not os.path.isdir(output_dir):
+        print("OUTPUT_DIR not defined or invalid in config.txt. Using Downloads folder as fallback.")
+        current_user = os.getlogin()
+        output_dir = os.path.join("C:\\Users", current_user, "Downloads")
+    
+    output_txt = os.path.join(output_dir, "ppredefinedfiles.txt")
+    os.makedirs(output_dir, exist_ok=True)
+    
+    directories = read_input_paths(input_file)
+    
+    # Load existing entries
+    existing_files = {}
+    if os.path.exists(output_txt):
+        with open(output_txt, 'r', encoding='utf-8') as f:
+            for line in f:
+                parts = line.strip().split('\t')
+                if len(parts) >= 4:
+                    filename = parts[0]
+                    existing_files[filename] = parts
+    
+    print(f"Loaded {len(existing_files)} existing file records")
+    
+    # Find current matching files
+    current_files = {}
+    for root_dir in directories:
+        if not os.path.exists(root_dir):
+            continue
+        for dirpath, _, filenames in os.walk(root_dir):
+            if "summaries" in dirpath.lower():
+                continue
+            for filename in filenames:
+                if any(p.match(filename) for p in compiled_patterns):
+                    full_path = os.path.join(dirpath, filename)
+                    if filename in current_files:
+                        continue
+                    ctime = get_creation_time(full_path)
+                    if ctime:
+                        actual_time = datetime.fromtimestamp(ctime).strftime("%Y-%m-%d %H:%M:%S")
+                        expected_time = f"{datetime.now().strftime('%Y-%m-%d')} {expected_arrival_time}"
+                        current_files[filename] = [filename, actual_time, full_path, expected_time]
+    
+    print(f"Found {len(current_files)} current matching files")
+    
+    # Merge existing and current
+    final_entries = []
+    all_filenames = sorted(set(existing_files.keys()).union(current_files.keys()))
+    expected_time_now = f"{datetime.now().strftime('%Y-%m-%d')} {expected_arrival_time}"
+    
+    for filename in all_filenames:
+        if filename in current_files:
+            final_entries.append(current_files[filename])
+            print(f"✓ Active: {filename}")
+        else:
+            # Not found now
+            if filename in existing_files:
+                prev = existing_files[filename]
+                final_entry = [
+                    filename,
+                    "File Not Found",
+                    "File Not Found",
+                    expected_time_now
+                ]
+                final_entries.append(final_entry)
+                print(f"⚠ Missing: {filename}")
+    
+    # Save final list
+    with open(output_txt, 'w', encoding='utf-8') as f:
+        for entry in final_entries:
+            f.write('\t'.join(entry) + '\n')
+    
+    print(f"\n✅ Updated ppredefinedfiles.txt saved to: {output_txt}")
+    print(f"Total files tracked: {len(final_entries)}")
+    print(f"Active files: {len(current_files)}")
+    print(f"Missing files: {len(final_entries) - len(current_files)}")
