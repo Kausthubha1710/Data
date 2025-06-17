@@ -6,7 +6,6 @@ def load_config(config_file):
     config = {}
     if not os.path.exists(config_file):
         raise FileNotFoundError(f"Config file not found: {config_file}")
-    
     with open(config_file, 'r', encoding='utf-8') as f:
         for line in f:
             line = line.strip()
@@ -18,19 +17,17 @@ def load_config(config_file):
 def get_all_drives():
     drives = []
     for drive in range(ord('A'), ord('Z') + 1):
-        drive_letter = chr(drive) + ":"
+        drive_letter = chr(drive) + ":\\"
         if os.path.exists(drive_letter):
             drives.append(drive_letter)
     return drives
 
 def read_input_paths(input_file):
     if not input_file or not os.path.exists(input_file):
-        print("INPUT_FILE not found or not defined, using common user directories.")
+        print("INPUT_FILE not found or not defined, using all drives.")
         return get_all_drives()
-    
     with open(input_file, 'r', encoding='utf-8') as f:
-        paths = [line.strip() for line in f if line.strip() and os.path.exists(line.strip())]
-        return paths if paths else get_all_drives()
+        return [line.strip() for line in f if line.strip() and os.path.exists(line.strip())]
 
 def get_creation_time(path):
     try:
@@ -47,39 +44,36 @@ def scan_and_generate(config):
     output_dir = config.get('OUTPUT_DIR')
     expected_arrival_time = config.get('EXPECTED_ARRIVAL_TIME', '')
     pattern_str = config.get('FILENAME_PATTERNS')
-    
+
     if not pattern_str:
         raise ValueError("FILENAME_PATTERNS must be defined in config.txt")
-    
     compiled_patterns = compile_patterns(pattern_str)
-    
+
     if not output_dir or not os.path.isdir(output_dir):
-        print("OUTPUT_DIR not defined or invalid in config.txt. Using Downloads folder as fallback.")
+        print("OUTPUT_DIR not defined or invalid. Using Downloads folder.")
         current_user = os.getlogin()
         output_dir = os.path.join("C:\\Users", current_user, "Downloads")
-    
+
     output_txt = os.path.join(output_dir, "ppredefinedfiles.txt")
     os.makedirs(output_dir, exist_ok=True)
-    
     directories = read_input_paths(input_file)
-    
-    # Load existing entries (using full path as key)
-    existing_data = {}
+
+    # Load existing entries
+    existing_data = {}  # key: filename
     if os.path.exists(output_txt):
         with open(output_txt, 'r', encoding='utf-8') as f:
             for line in f:
                 parts = line.strip().split('\t')
                 if len(parts) >= 4:
-                    full_path = parts[2]  # Use full path as key
-                    existing_data[full_path] = parts
-    
-    # Find current matching files (also using full path as key)
+                    filename = parts[0]
+                    existing_data[filename] = parts
+
+    # Scan current files
     current_files = {}
     for root_dir in directories:
         for dirpath, _, filenames in os.walk(root_dir):
             if "summaries" in dirpath:
-                continue  # Skip the "summaries" folder
-            
+                continue
             for filename in filenames:
                 if any(p.match(filename) for p in compiled_patterns):
                     full_path = os.path.join(dirpath, filename)
@@ -87,41 +81,28 @@ def scan_and_generate(config):
                     if ctime:
                         actual_dt = datetime.fromtimestamp(ctime)
                         actual_time = actual_dt.strftime("%Y-%m-%d %H:%M:%S")
-                        
-                        # Combine the current date with the fixed time from the config
-                        current_date = datetime.now().strftime("%Y-%m-%d")
-                        expected_time = f"{current_date} {expected_arrival_time}"
-                        
-                        current_files[full_path] = [filename, actual_time, full_path, expected_time]
-    
-    # Build final entries (merge full path keys)
+                        expected_time = f"{datetime.now().strftime('%Y-%m-%d')} {expected_arrival_time}"
+                        current_files[filename] = [filename, actual_time, full_path, expected_time]
+
+    # Merge existing and current
     all_keys = set(existing_data.keys()).union(set(current_files.keys()))
     final_entries = []
-    
-    for key in sorted(all_keys):
-        if key in current_files:
-            # File exists - use current data
-            final_entries.append('\t'.join(current_files[key]))
+    for filename in sorted(all_keys):
+        if filename in current_files:
+            final_entries.append('\t'.join(current_files[filename]))
         else:
-            # File doesn't exist - check if it was previously tracked
-            if key in existing_data:
-                # File was previously tracked but now missing
-                previous = existing_data[key].copy()  # Create a copy to avoid modifying original
-                filename = previous[0]  # Keep original filename
-                previous[1] = 'File Not Found'  # Actual arrival time
-                previous[2] = 'File Not Found'  # Path status
-                previous[3] = f"{datetime.now().strftime('%Y-%m-%d')} {expected_arrival_time}"  # Expected time
-                final_entries.append('\t'.join(previous))
-            # Note: We don't create new entries for files that were never tracked
-    
-    # Write the updated file
+            old = existing_data.get(filename, [filename, 'File Not Found', 'File Not Found', ''])
+            old[1] = 'File Not Found'
+            old[2] = 'File Not Found'
+            old[3] = f"{datetime.now().strftime('%Y-%m-%d')} {expected_arrival_time}"
+            final_entries.append('\t'.join(old))
+
     with open(output_txt, 'w', encoding='utf-8') as f:
         for entry in final_entries:
             f.write(entry + '\n')
-    
-    print(f"Updated ppredefinedfiles.txt saved to: {output_txt}")
 
-# Entry Point
+    print(f"✅ Updated ppredefinedfiles.txt saved to: {output_txt}")
+
 if __name__ == "__main__":
     config = load_config('config.txt')
     scan_and_generate(config)
