@@ -479,15 +479,15 @@ def scan_and_generate(config):
 
     directories = read_input_paths(input_file)
 
-    # Load existing entries using filename as key
+    # Load existing entries using full path as key
     existing_data = {}
     if os.path.exists(output_txt):
         with open(output_txt, 'r', encoding='utf-8') as f:
             for line in f:
                 parts = line.strip().split('\t')
                 if len(parts) >= 4:
-                    filename = parts[0]
-                    existing_data[filename] = parts
+                    full_path = parts[2]  # Use full path as key
+                    existing_data[full_path] = parts
 
     # Scan file system and track current status
     found_files = {}
@@ -504,16 +504,17 @@ def scan_and_generate(config):
                         actual_time = actual_dt.strftime("%Y-%m-%d %H:%M:%S")
                         current_date = datetime.now().strftime("%Y-%m-%d")
                         expected_time = f"{current_date} {expected_arrival_time}"
-                        found_files[filename] = [filename, actual_time, full_path, expected_time]
+                        found_files[full_path] = [filename, actual_time, full_path, expected_time]
 
-    # Build final output
-    all_filenames = set(existing_data.keys()).union(found_files.keys())
+    # Build final output: merge previous and current
+    all_keys = set(existing_data.keys()).union(found_files.keys())
     final_entries = []
 
-    for filename in sorted(all_filenames):
-        if filename in found_files:
-            final_entries.append('\t'.join(found_files[filename]))
+    for full_path in sorted(all_keys):
+        if full_path in found_files:
+            final_entries.append('\t'.join(found_files[full_path]))
         else:
+            filename = os.path.basename(full_path)
             current_date = datetime.now().strftime("%Y-%m-%d")
             expected_time = f"{current_date} {expected_arrival_time}"
             final_entries.append(f"{filename}\tFile Not Found\tFile Not Found\t{expected_time}")
