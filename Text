@@ -63,31 +63,26 @@ def scan_and_generate(config):
     
     directories = read_input_paths(input_file)
     
-    # Load existing entries - use both filename and full path for better matching
-    existing_data = {}
-    existing_by_filename = {}  # Secondary index by filename only
+    # Load existing entries - use filename as primary key for tracking
+    existing_files = {}  # filename -> [filename, actual_time, path, expected_time]
     
     if os.path.exists(output_txt):
         with open(output_txt, 'r', encoding='utf-8') as f:
-            for line_num, line in enumerate(f, 1):
+            for line in f:
                 parts = line.strip().split('\t')
                 if len(parts) >= 4:
                     filename = parts[0]
-                    full_path = parts[2] if parts[2] != 'File Not Found' else f"missing_{line_num}"
-                    
-                    # Primary index by full path
-                    existing_data[full_path] = parts
-                    
-                    # Secondary index by filename for handling duplicates
-                    if filename not in existing_by_filename:
-                        existing_by_filename[filename] = []
-                    existing_by_filename[filename].append((full_path, parts))
+                    existing_files[filename] = parts
     
-    # Find current matching files - ensure no duplicates
-    current_files = {}
-    processed_files = set()  # Track processed files to avoid duplicates
+    print(f"Loaded {len(existing_files)} existing file records")
+    
+    # Find current matching files
+    current_files = {}  # filename -> [filename, actual_time, path, expected_time]
     
     for root_dir in directories:
+        if not os.path.exists(root_dir):
+            continue
+            
         for dirpath, _, filenames in os.walk(root_dir):
             if "summaries" in dirpath.lower():
                 continue  # Skip the "summaries" folder
@@ -96,14 +91,9 @@ def scan_and_generate(config):
                 if any(p.match(filename) for p in compiled_patterns):
                     full_path = os.path.join(dirpath, filename)
                     
-                    # Normalize path to avoid duplicates from path variations
-                    normalized_path = os.path.normpath(full_path)
-                    
-                    # Skip if we've already processed this exact file
-                    if normalized_path in processed_files:
+                    # Skip if we've already found this filename (avoid duplicates)
+                    if filename in current_files:
                         continue
-                    
-                    processed_files.add(normalized_path)
                     
                     ctime = get_creation_time(full_path)
                     if ctime:
@@ -114,55 +104,48 @@ def scan_and_generate(config):
                         current_date = datetime.now().strftime("%Y-%m-%d")
                         expected_time = f"{current_date} {expected_arrival_time}"
                         
-                        current_files[normalized_path] = [filename, actual_time, normalized_path, expected_time]
+                        current_files[filename] = [filename, actual_time, full_path, expected_time]
     
-    # Build final entries - handle duplicates intelligently
+    print(f"Found {len(current_files)} current matching files")
+    
+    # Build final entries
+    all_filenames = set(existing_files.keys()).union(set(current_files.keys()))
     final_entries = []
-    processed_filenames = set()  # Track by filename to avoid duplicates
     
-    # First, process all currently existing files
-    for full_path, file_data in current_files.items():
-        filename = file_data[0]
-        if filename not in processed_filenames:
-            final_entries.append('\t'.join(file_data))
-            processed_filenames.add(filename)
+    current_date = datetime.now().strftime("%Y-%m-%d")
+    expected_time_now = f"{current_date} {expected_arrival_time}"
     
-    # Then, process files that existed before but are now missing
-    for old_path, old_data in existing_data.items():
-        filename = old_data[0]
-        
-        # Skip if this filename is already processed (file still exists)
-        if filename in processed_filenames:
-            continue
-            
-        # Check if this file actually exists anywhere in current scan
-        file_still_exists = any(current_files[path][0] == filename for path in current_files)
-        
-        if not file_still_exists:
-            # File was previously tracked but now missing
-            missing_entry = [
-                filename,
-                'File Not Found',
-                'File Not Found', 
-                f"{datetime.now().strftime('%Y-%m-%d')} {expected_arrival_time}"
-            ]
-            
-            final_entries.append('\t'.join(missing_entry))
-            processed_filenames.add(filename)
+    for filename in sorted(all_filenames):
+        if filename in current_files:
+            # File currently exists - use current data
+            final_entries.append(current_files[filename])
+            print(f"✓ Active: {filename}")
+        else:
+            # File doesn't exist currently but was tracked before
+            if filename in existing_files:
+                # Create "File Not Found" entry
+                missing_entry = [
+                    filename,
+                    'File Not Found',
+                    'File Not Found',
+                    expected_time_now
+                ]
+                final_entries.append(missing_entry)
+                print(f"⚠ Missing: {filename}")
     
     # Write the updated file
     with open(output_txt, 'w', encoding='utf-8') as f:
-        for entry in sorted(final_entries):
-            f.write(entry + '\n')
+        for entry in final_entries:
+            f.write('\t'.join(entry) + '\n')
     
-    print(f"Updated ppredefinedfiles.txt saved to: {output_txt}")
-    print(f"Total unique files tracked: {len(final_entries)}")
+    print(f"\nUpdated ppredefinedfiles.txt saved to: {output_txt}")
+    print(f"Total files tracked: {len(final_entries)}")
     
-    # Debug info
-    current_count = len(current_files)
-    missing_count = len(final_entries) - current_count
-    print(f"Current files found: {current_count}")
-    print(f"Missing files tracked: {missing_count}")
+    # Summary
+    active_count = len(current_files)
+    missing_count = len(final_entries) - active_count
+    print(f"Active files: {active_count}")
+    print(f"Missing files: {missing_count}")
 
 # Entry Point
 if __name__ == "__main__":
