@@ -470,7 +470,7 @@ def scan_and_generate(config):
     compiled_patterns = compile_patterns(pattern_str)
 
     if not output_dir or not os.path.isdir(output_dir):
-        print("OUTPUT_DIR not defined or invalid in config.txt. Using Downloads folder as fallback.")
+        print("OUTPUT_DIR not defined or invalid. Using Downloads folder as fallback.")
         current_user = os.getlogin()
         output_dir = os.path.join("C:\\Users", current_user, "Downloads")
 
@@ -479,7 +479,7 @@ def scan_and_generate(config):
 
     directories = read_input_paths(input_file)
 
-    # Load existing entries using file name as key
+    # Load existing entries using filename as key
     existing_data = {}
     if os.path.exists(output_txt):
         with open(output_txt, 'r', encoding='utf-8') as f:
@@ -489,8 +489,8 @@ def scan_and_generate(config):
                     filename = parts[0]
                     existing_data[filename] = parts
 
-    # Scan file system for matching files
-    current_files = {}
+    # Scan file system and track current status
+    found_files = {}
     for root_dir in directories:
         for dirpath, _, filenames in os.walk(root_dir):
             if "summaries" in dirpath.lower():
@@ -504,30 +504,27 @@ def scan_and_generate(config):
                         actual_time = actual_dt.strftime("%Y-%m-%d %H:%M:%S")
                         current_date = datetime.now().strftime("%Y-%m-%d")
                         expected_time = f"{current_date} {expected_arrival_time}"
-                        current_files[filename] = [filename, actual_time, full_path, expected_time]
+                        found_files[filename] = [filename, actual_time, full_path, expected_time]
 
-    # Combine previous and current data using filename as key
-    all_filenames = set(existing_data.keys()).union(current_files.keys())
+    # Build final output
+    all_filenames = set(existing_data.keys()).union(found_files.keys())
     final_entries = []
 
     for filename in sorted(all_filenames):
-        if filename in current_files:
-            final_entries.append('\t'.join(current_files[filename]))
+        if filename in found_files:
+            final_entries.append('\t'.join(found_files[filename]))
         else:
-            prev = existing_data.get(filename, [filename, 'File Not Found', 'File Not Found', f"{datetime.now().strftime('%Y-%m-%d')} {expected_arrival_time}"])
-            prev[1] = 'File Not Found'
-            prev[2] = 'File Not Found'
-            prev[3] = f"{datetime.now().strftime('%Y-%m-%d')} {expected_arrival_time}"
-            final_entries.append('\t'.join(prev))
+            current_date = datetime.now().strftime("%Y-%m-%d")
+            expected_time = f"{current_date} {expected_arrival_time}"
+            final_entries.append(f"{filename}\tFile Not Found\tFile Not Found\t{expected_time}")
 
-    # Save to ppredefinedfiles.txt
     with open(output_txt, 'w', encoding='utf-8') as f:
         for entry in final_entries:
             f.write(entry + '\n')
 
     print(f"✅ Updated ppredefinedfiles.txt saved to: {output_txt}")
 
-# Entry point
+# Entry Point
 if __name__ == "__main__":
     config = load_config('config.txt')
     scan_and_generate(config)
