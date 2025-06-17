@@ -117,64 +117,52 @@ def scan_and_generate(config):
                         current_files[normalized_path] = [filename, actual_time, normalized_path, expected_time]
     
     # Build final entries - handle duplicates intelligently
-    all_keys = set(existing_data.keys()).union(set(current_files.keys()))
     final_entries = []
-    processed_entries = set()  # Track to avoid duplicate entries
+    processed_filenames = set()  # Track by filename to avoid duplicates
     
-    for key in sorted(all_keys):
-        if key in current_files:
-            # File exists - use current data
-            entry = '\t'.join(current_files[key])
-            if entry not in processed_entries:
-                final_entries.append(entry)
-                processed_entries.add(entry)
-        else:
-            # File doesn't exist - check if it was previously tracked
-            if key in existing_data:
-                # File was previously tracked but now missing
-                previous = existing_data[key].copy()
-                filename = previous[0]  # Keep original filename
-                
-                # Create unique entry for missing file
-                missing_entry = [
-                    filename,
-                    'File Not Found',
-                    'File Not Found', 
-                    f"{datetime.now().strftime('%Y-%m-%d')} {expected_arrival_time}"
-                ]
-                
-                entry = '\t'.join(missing_entry)
-                if entry not in processed_entries:
-                    final_entries.append(entry)
-                    processed_entries.add(entry)
+    # First, process all currently existing files
+    for full_path, file_data in current_files.items():
+        filename = file_data[0]
+        if filename not in processed_filenames:
+            final_entries.append('\t'.join(file_data))
+            processed_filenames.add(filename)
     
-    # Remove any remaining duplicates by filename (keep the most recent entry)
-    final_unique_entries = []
-    filename_tracker = {}
-    
-    for entry in final_entries:
-        parts = entry.split('\t')
-        if len(parts) >= 4:
-            filename = parts[0]
+    # Then, process files that existed before but are now missing
+    for old_path, old_data in existing_data.items():
+        filename = old_data[0]
+        
+        # Skip if this filename is already processed (file still exists)
+        if filename in processed_filenames:
+            continue
             
-            # If we haven't seen this filename, or this is a more recent/complete entry
-            if filename not in filename_tracker:
-                filename_tracker[filename] = entry
-            else:
-                # Keep the entry that's not "File Not Found" if available
-                current_entry = filename_tracker[filename].split('\t')
-                if current_entry[1] == 'File Not Found' and parts[1] != 'File Not Found':
-                    filename_tracker[filename] = entry
-    
-    final_unique_entries = list(filename_tracker.values())
+        # Check if this file actually exists anywhere in current scan
+        file_still_exists = any(current_files[path][0] == filename for path in current_files)
+        
+        if not file_still_exists:
+            # File was previously tracked but now missing
+            missing_entry = [
+                filename,
+                'File Not Found',
+                'File Not Found', 
+                f"{datetime.now().strftime('%Y-%m-%d')} {expected_arrival_time}"
+            ]
+            
+            final_entries.append('\t'.join(missing_entry))
+            processed_filenames.add(filename)
     
     # Write the updated file
     with open(output_txt, 'w', encoding='utf-8') as f:
-        for entry in sorted(final_unique_entries):
+        for entry in sorted(final_entries):
             f.write(entry + '\n')
     
     print(f"Updated ppredefinedfiles.txt saved to: {output_txt}")
-    print(f"Total unique files tracked: {len(final_unique_entries)}")
+    print(f"Total unique files tracked: {len(final_entries)}")
+    
+    # Debug info
+    current_count = len(current_files)
+    missing_count = len(final_entries) - current_count
+    print(f"Current files found: {current_count}")
+    print(f"Missing files tracked: {missing_count}")
 
 # Entry Point
 if __name__ == "__main__":
