@@ -417,6 +417,7 @@ while True:
 generate_data.py néw 
 
 
+
 import os
 import re
 from datetime import datetime
@@ -471,7 +472,7 @@ def scan_and_generate(config):
     compiled_patterns = compile_patterns(pattern_str)
 
     if not output_dir or not os.path.isdir(output_dir):
-        print("OUTPUT_DIR not defined or invalid in config.txt. Using Downloads folder as fallback.")
+        print("OUTPUT_DIR not defined or invalid. Using Downloads folder.")
         current_user = os.getlogin()
         output_dir = os.path.join("C:\\Users", current_user, "Downloads")
 
@@ -480,7 +481,7 @@ def scan_and_generate(config):
 
     directories = read_input_paths(input_file)
 
-    # Load existing entries using file name as key
+    # Load existing entries (keep only unique filenames as key)
     existing_data = {}
     if os.path.exists(output_txt):
         with open(output_txt, 'r', encoding='utf-8') as f:
@@ -507,7 +508,7 @@ def scan_and_generate(config):
                         expected_time = f"{current_date} {expected_arrival_time}"
                         current_files[filename] = [filename, actual_time, full_path, expected_time]
 
-    # Merge entries by filename (key)
+    # Merge both sets
     all_filenames = set(existing_data.keys()).union(set(current_files.keys()))
     final_entries = []
 
@@ -515,21 +516,17 @@ def scan_and_generate(config):
         if fname in current_files:
             final_entries.append('\t'.join(current_files[fname]))
         else:
-            prev = existing_data.get(fname)
-            if prev:
-                prev[1] = 'File Not Found'  # Actual arrival time
-                prev[2] = 'File Not Found'  # Path
-                prev[3] = f"{datetime.now().strftime('%Y-%m-%d')} {expected_arrival_time}"
-                final_entries.append('\t'.join(prev))
-            else:
-                # Handle unexpected case
-                final_entries.append(f"{fname}\tFile Not Found\tFile Not Found\t{datetime.now().strftime('%Y-%m-%d')} {expected_arrival_time}")
+            previous = existing_data.get(fname, [fname, 'File Not Found', 'File Not Found', ''])
+            previous[1] = 'File Not Found'
+            previous[2] = 'File Not Found'
+            previous[3] = f"{datetime.now().strftime('%Y-%m-%d')} {expected_arrival_time}"
+            final_entries.append('\t'.join(previous))
 
     with open(output_txt, 'w', encoding='utf-8') as f:
         for entry in final_entries:
             f.write(entry + '\n')
 
-    print(f"Updated ppredefinedfiles.txt saved to: {output_txt}")
+    print(f"✅ Updated ppredefinedfiles.txt saved to: {output_txt}")
 
 # Entry Point
 if __name__ == "__main__":
