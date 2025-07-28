@@ -1,0 +1,88 @@
+import xml.etree.ElementTree as ET
+import csv
+import argparse
+import os
+import sys
+
+# Parse command-line arguments
+parser = argparse.ArgumentParser(description='XML to CSV converter')
+parser.add_argument('--xml_file', help='XML file to parse', required=True)
+args = parser.parse_args()
+
+# Get base filename
+filename = os.path.basename(args.xml_file)
+filename_key = os.path.splitext(filename)[0].split()[0]  # Extract 'BG02' from 'PAM Dashboard Management BG02.xml'
+
+# Load config
+rules = []
+with open('config.txt', 'r') as f:
+    for line in f:
+        line = line.strip()
+        if line and not line.startswith('#'):
+            parts = line.split(':')
+            if len(parts) != 5:
+                print(f"Invalid config line: {line}")
+                continue
+            rules.append({
+                'file_key': parts[0].strip(),
+                'collection': parts[1].strip(),
+                'filter_attr': parts[2].split(',')[0].strip(),
+                'expected_val': parts[2].split(',')[1].strip(),
+                'sub_elements': [x.strip() for x in parts[3].split(',')] if parts[3] else [],
+                'attributes': [x.strip() for x in parts[4].split(',')]
+            })
+
+# Find matching rule
+matching_rules = [r for r in rules if r['file_key'] == filename_key]
+if not matching_rules:
+    print(f"No rule found for {filename_key} in config.txt")
+    sys.exit(1)
+
+# Load XML
+tree = ET.parse(args.xml_file)
+root = tree.getroot()
+namespace = ''
+if root.tag.startswith('{'):
+    namespace = root.tag.split('}')[0].strip('{')
+    ns_prefix = f'{{{namespace}}}'
+else:
+    ns_prefix = ''
+
+# Process each matching rule
+for rule in matching_rules:
+    collection_elem = root.find(f'.//{ns_prefix}{rule["collection"]}')
+    if collection_elem is None:
+        print(f"Collection '{rule['collection']}' not found in XML.")
+        continue
+
+    data = []
+    all_keys = set()
+
+    elements = collection_elem.findall(f'.//{ns_prefix}*')
+    for element in elements:
+        # Case: filtering at this level
+        if rule['filter_attr'] in element.attrib and element.attrib[rule['filter_attr']] == rule['expected_val']:
+            row = {attr: element.attrib.get(attr, '') for attr in rule['attributes']}
+            data.append(row)
+            all_keys.update(row.keys())
+
+        # Case: filter deeper sub-elements
+        for sub_tag in rule['sub_elements']:
+            for sub_elem in element.findall(f'.//{ns_prefix}{sub_tag}'):
+                if rule['filter_attr'] in sub_elem.attrib and sub_elem.attrib[rule['filter_attr']] == rule['expected_val']:
+                    row = {attr: sub_elem.attrib.get(attr, '') for attr in rule['attributes']}
+                    data.append(row)
+                    all_keys.update(row.keys())
+
+    if not data:
+        print(f"No matching data found in {rule['collection']} for {filename}")
+        continue
+
+    # Write CSV
+    out_file = f"{filename_key}_{rule['collection']}_filtered.csv"
+    with open(out_file, 'w', newline='', encoding='utf-8') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=sorted(all_keys))
+        writer.writeheader()
+        for row in data:
+            writer.writerow(row)
+    print(f"Data written to: {out_file}")
