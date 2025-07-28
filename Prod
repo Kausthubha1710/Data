@@ -4,43 +4,50 @@ import argparse
 import os
 import sys
 
-# Parse command-line arguments
-parser = argparse.ArgumentParser(description='XML to CSV converter')
-parser.add_argument('--xml_file', help='XML file to parse', required=True)
+# Parse command-line argument
+parser = argparse.ArgumentParser(description='XML to CSV converter based on config.txt rules.')
+parser.add_argument('--xml_file', help='Path to the XML file to parse', required=True)
 args = parser.parse_args()
 
-# Get base filename
+# Extract file key from filename
 filename = os.path.basename(args.xml_file)
-filename_key = os.path.splitext(filename)[0].split()[0]  # Extract 'BG02' from 'PAM Dashboard Management BG02.xml'
+file_key = os.path.splitext(filename)[0].split()[-1]  # Extracts "BG02" from "PAM Dashboard Management BG02.xml"
 
-# Load config
+# Load config.txt
 rules = []
-with open('config.txt', 'r') as f:
+with open('config.txt', 'r', encoding='utf-8') as f:
     for line in f:
         line = line.strip()
-        if line and not line.startswith('#'):
+        if not line or line.startswith('#'):
+            continue
+        try:
             parts = line.split(':')
             if len(parts) != 5:
-                print(f"Invalid config line: {line}")
+                print(f"Skipping invalid config line: {line}")
                 continue
-            rules.append({
+            rule = {
                 'file_key': parts[0].strip(),
                 'collection': parts[1].strip(),
                 'filter_attr': parts[2].split(',')[0].strip(),
                 'expected_val': parts[2].split(',')[1].strip(),
-                'sub_elements': [x.strip() for x in parts[3].split(',')] if parts[3] else [],
+                'sub_elements': [x.strip() for x in parts[3].split(',')] if parts[3].strip() else [],
                 'attributes': [x.strip() for x in parts[4].split(',')]
-            })
+            }
+            rules.append(rule)
+        except Exception as e:
+            print(f"Error parsing line: {line} -> {e}")
 
-# Find matching rule
-matching_rules = [r for r in rules if r['file_key'] == filename_key]
-if not matching_rules:
-    print(f"No rule found for {filename_key} in config.txt")
+# Match rule for the current file
+matched_rules = [r for r in rules if r['file_key'] == file_key]
+if not matched_rules:
+    print(f"No matching config rule found for file key: {file_key}")
     sys.exit(1)
 
-# Load XML
+# Parse XML
 tree = ET.parse(args.xml_file)
 root = tree.getroot()
+
+# Detect namespace
 namespace = ''
 if root.tag.startswith('{'):
     namespace = root.tag.split('}')[0].strip('{')
@@ -48,25 +55,28 @@ if root.tag.startswith('{'):
 else:
     ns_prefix = ''
 
-# Process each matching rule
-for rule in matching_rules:
-    collection_elem = root.find(f'.//{ns_prefix}{rule["collection"]}')
-    if collection_elem is None:
-        print(f"Collection '{rule['collection']}' not found in XML.")
-        continue
-
+# Process all matching rules
+for rule in matched_rules:
     data = []
     all_keys = set()
 
+    # Locate the collection tag
+    collection_elem = root.find(f'.//{ns_prefix}{rule["collection"]}')
+    if collection_elem is None:
+        print(f"Collection tag '{rule['collection']}' not found in XML.")
+        continue
+
+    # Find elements to check
     elements = collection_elem.findall(f'.//{ns_prefix}*')
+
     for element in elements:
-        # Case: filtering at this level
+        # Check top-level filter
         if rule['filter_attr'] in element.attrib and element.attrib[rule['filter_attr']] == rule['expected_val']:
             row = {attr: element.attrib.get(attr, '') for attr in rule['attributes']}
             data.append(row)
             all_keys.update(row.keys())
 
-        # Case: filter deeper sub-elements
+        # Check sub-elements if any
         for sub_tag in rule['sub_elements']:
             for sub_elem in element.findall(f'.//{ns_prefix}{sub_tag}'):
                 if rule['filter_attr'] in sub_elem.attrib and sub_elem.attrib[rule['filter_attr']] == rule['expected_val']:
@@ -74,15 +84,14 @@ for rule in matching_rules:
                     data.append(row)
                     all_keys.update(row.keys())
 
-    if not data:
-        print(f"No matching data found in {rule['collection']} for {filename}")
-        continue
-
-    # Write CSV
-    out_file = f"{filename_key}_{rule['collection']}_filtered.csv"
-    with open(out_file, 'w', newline='', encoding='utf-8') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=sorted(all_keys))
-        writer.writeheader()
-        for row in data:
-            writer.writerow(row)
-    print(f"Data written to: {out_file}")
+    # Write to CSV
+    if data:
+        output_file = f"{file_key}_{rule['collection']}_filtered.csv"
+        with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=sorted(all_keys))
+            writer.writeheader()
+            for row in data:
+                writer.writerow(row)
+        print(f"✅ Data written to: {output_file}")
+    else:
+        print(f"No matching data found for rule: {rule['collection']}")
