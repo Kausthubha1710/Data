@@ -9,9 +9,9 @@ parser = argparse.ArgumentParser(description='XML to CSV converter based on conf
 parser.add_argument('--xml_file', help='Path to the XML file to parse', required=True)
 args = parser.parse_args()
 
-# Extract file key from filename
+# Extract full filename (without extension)
 filename = os.path.basename(args.xml_file)
-file_key = os.path.splitext(filename)[0].split()[-1]  # Extracts "BG02" from "PAM Dashboard Management BG02.xml"
+file_key = os.path.splitext(filename)[0].strip()  # e.g., 'PAM Dashboard Management BG02'
 
 # Load config.txt
 rules = []
@@ -37,10 +37,10 @@ with open('config.txt', 'r', encoding='utf-8') as f:
         except Exception as e:
             print(f"Error parsing line: {line} -> {e}")
 
-# Match rule for the current file
+# Match rule for this exact full file name
 matched_rules = [r for r in rules if r['file_key'] == file_key]
 if not matched_rules:
-    print(f"No matching config rule found for file key: {file_key}")
+    print(f"No matching config rule found for file key: '{file_key}'")
     sys.exit(1)
 
 # Parse XML
@@ -86,7 +86,8 @@ for rule in matched_rules:
 
     # Write to CSV
     if data:
-        output_file = f"{file_key}_{rule['collection']}_filtered.csv"
+        safe_file_key = file_key.replace(' ', '_')
+        output_file = f"{safe_file_key}_{rule['collection']}_filtered.csv"
         with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=sorted(all_keys))
             writer.writeheader()
