@@ -63,70 +63,43 @@ CREATE TABLE history (
     FOREIGN KEY (report_id) REFERENCES SafeData(id)
 );
 
--- Assume the new row inserted into SafeData has id = ? (e.g., 3)
--- We'll use a variable to simulate the last inserted id
-SET @new_id := LAST_INSERT_ID();
+-- Declare variables
+DECLARE done INT DEFAULT 0;
+DECLARE v_id INT;
+DECLARE v_safename VARCHAR(255);
+DECLARE v_import_date DATE;
 
--- Get the SafeName and ImportDate of the new record
-SELECT SafeName, ImportDate
-INTO @safe_name, @import_date
-FROM SafeData
-WHERE id = @new_id;
+-- Cursor to loop through SafeData
+DECLARE cur CURSOR FOR
+  SELECT id, SafeName, ImportDate FROM SafeData;
 
--- Check if this SafeName exists in metadata
-SELECT COUNT(*) INTO @exists
-FROM metadata
-WHERE SafeName = @safe_name;
+DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = 1;
 
--- Case A: Insert if it doesn't exist
-INSERT INTO metadata (
-    id, Metier2, SafeName, BAM_ID, AppName, Instance, AppStatus,
-    EntitlementOwnerUID, EntitlementOwnerName, EntitlementOwnerMetier,
-    EntitlementOwnerSite, NB_Accounts, SafeCreationDate,
-    LastUsedHumanDate, ImportDate, Assignee, Action,
-    Remediation, Comments, NbSafeUsers, NbSafeUsersWithOwnerRight,
-    NbSafeUsersWithBreakglassRight, NbSafeUsersWithDEVRight,
-    NbSafeUsersWithConsultRight, latest_import_date
-)
-SELECT id, Metier2, SafeName, BAM_ID, AppName, Instance, AppStatus,
-       EntitlementOwnerUID, EntitlementOwnerName, EntitlementOwnerMetier,
-       EntitlementOwnerSite, NB_Accounts, SafeCreationDate,
-       LastUsedHumanDate, ImportDate, Assignee, Action,
-       Remediation, Comments, NbSafeUsers, NbSafeUsersWithOwnerRight,
-       NbSafeUsersWithBreakglassRight, NbSafeUsersWithDEVRight,
-       NbSafeUsersWithConsultRight, ImportDate
-FROM SafeData
-WHERE id = @new_id
-AND NOT EXISTS (
-    SELECT 1 FROM metadata WHERE SafeName = @safe_name
-);
+-- Open the cursor
+OPEN cur;
 
--- Case B: Update if SafeName exists and the ImportDate is newer
-UPDATE metadata m
-JOIN SafeData s ON m.SafeName = s.SafeName AND s.id = @new_id
-SET
-    m.id = s.id,
-    m.Metier2 = s.Metier2,
-    m.BAM_ID = s.BAM_ID,
-    m.AppName = s.AppName,
-    m.Instance = s.Instance,
-    m.AppStatus = s.AppStatus,
-    m.EntitlementOwnerUID = s.EntitlementOwnerUID,
-    m.EntitlementOwnerName = s.EntitlementOwnerName,
-    m.EntitlementOwnerMetier = s.EntitlementOwnerMetier,
-    m.EntitlementOwnerSite = s.EntitlementOwnerSite,
-    m.NB_Accounts = s.NB_Accounts,
-    m.SafeCreationDate = s.SafeCreationDate,
-    m.LastUsedHumanDate = s.LastUsedHumanDate,
-    m.ImportDate = s.ImportDate,
-    m.Assignee = s.Assignee,
-    m.Action = s.Action,
-    m.Remediation = s.Remediation,
-    m.Comments = s.Comments,
-    m.NbSafeUsers = s.NbSafeUsers,
-    m.NbSafeUsersWithOwnerRight = s.NbSafeUsersWithOwnerRight,
-    m.NbSafeUsersWithBreakglassRight = s.NbSafeUsersWithBreakglassRight,
-    m.NbSafeUsersWithDEVRight = s.NbSafeUsersWithDEVRight,
-    m.NbSafeUsersWithConsultRight = s.NbSafeUsersWithConsultRight,
-    m.latest_import_date = s.ImportDate
-WHERE m.SafeName = @safe_name AND s.ImportDate > m.latest_import_date;
+read_loop: LOOP
+  FETCH cur INTO v_id, v_safename, v_import_date;
+  IF done THEN
+    LEAVE read_loop;
+  END IF;
+
+  -- Check if exact (SafeName, id) exists in metadata
+  IF NOT EXISTS (
+    SELECT 1 FROM metadata WHERE SafeName = v_safename AND id = v_id
+  ) THEN
+    -- If not, insert this row into metadata
+    INSERT INTO metadata (id, SafeName, latest_import_date)
+    VALUES (v_id, v_safename, v_import_date);
+  
+  ELSE
+    -- If SafeName already exists, update latest_import_date if newer
+    UPDATE metadata
+    SET latest_import_date = v_import_date
+    WHERE SafeName = v_safename AND latest_import_date < v_import_date;
+  END IF;
+
+END LOOP;
+
+-- Close the cursor
+CLOSE cur;
