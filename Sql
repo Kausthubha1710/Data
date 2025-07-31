@@ -1,0 +1,142 @@
+CREATE TABLE SafeData (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    Metier2 VARCHAR(255),
+    SafeName VARCHAR(255),
+    BAM_ID INT,
+    AppName VARCHAR(255),
+    Instance VARCHAR(255),
+    AppStatus VARCHAR(255),
+    EntitlementOwnerUID VARCHAR(255),
+    EntitlementOwnerName VARCHAR(255),
+    EntitlementOwnerMetier VARCHAR(255),
+    EntitlementOwnerSite VARCHAR(255),
+    NB_Accounts INT,
+    SafeCreationDate DATETIME,
+    LastUsedHumanDate DATETIME,
+    ImportDate DATETIME,
+    Assignee VARCHAR(255),
+    Action VARCHAR(255),
+    Remediation VARCHAR(255),
+    Comments VARCHAR(255),
+    NbSafeUsers INT,
+    NbSafeUsersWithOwnerRight INT,
+    NbSafeUsersWithBreakglassRight INT,
+    NbSafeUsersWithDEVRight INT,
+    NbSafeUsersWithConsultRight INT,
+    UNIQUE KEY (id, SafeName)
+);
+
+CREATE TABLE metadata (
+    id INT,
+    Metier2 VARCHAR(255),
+    SafeName VARCHAR(255),
+    BAM_ID INT,
+    AppName VARCHAR(255),
+    Instance VARCHAR(255),
+    AppStatus VARCHAR(255),
+    EntitlementOwnerUID VARCHAR(255),
+    EntitlementOwnerName VARCHAR(255),
+    EntitlementOwnerMetier VARCHAR(255),
+    EntitlementOwnerSite VARCHAR(255),
+    NB_Accounts INT,
+    SafeCreationDate DATETIME,
+    LastUsedHumanDate DATETIME,
+    ImportDate DATETIME,
+    Assignee VARCHAR(255),
+    Action VARCHAR(255),
+    Remediation VARCHAR(255),
+    Comments VARCHAR(255),
+    NbSafeUsers INT,
+    NbSafeUsersWithOwnerRight INT,
+    NbSafeUsersWithBreakglassRight INT,
+    NbSafeUsersWithDEVRight INT,
+    NbSafeUsersWithConsultRight INT,
+    latest_import_date DATETIME,
+    PRIMARY KEY (SafeName)  -- assumes SafeName is unique
+);
+
+
+CREATE TABLE history (
+    sno INT AUTO_INCREMENT PRIMARY KEY,
+    report_id INT,
+    present_on DATE,
+    FOREIGN KEY (report_id) REFERENCES SafeData(id)
+);
+
+DELIMITER $$
+
+CREATE TRIGGER trg_after_insert_safedata
+AFTER INSERT ON SafeData
+FOR EACH ROW
+BEGIN
+    DECLARE existing_id INT;
+    DECLARE existing_date DATETIME;
+
+    -- Check if SafeName exists in metadata
+    SELECT id, latest_import_date INTO existing_id, existing_date
+    FROM metadata
+    WHERE SafeName = NEW.SafeName
+    LIMIT 1;
+
+    -- Case 1: SafeName does NOT exist — insert into metadata
+    IF existing_id IS NULL THEN
+        INSERT INTO metadata (
+            id, Metier2, SafeName, BAM_ID, AppName, Instance, AppStatus,
+            EntitlementOwnerUID, EntitlementOwnerName, EntitlementOwnerMetier,
+            EntitlementOwnerSite, NB_Accounts, SafeCreationDate, LastUsedHumanDate,
+            ImportDate, Assignee, Action, Remediation, Comments,
+            NbSafeUsers, NbSafeUsersWithOwnerRight, NbSafeUsersWithBreakglassRight,
+            NbSafeUsersWithDEVRight, NbSafeUsersWithConsultRight, latest_import_date
+        )
+        VALUES (
+            NEW.id, NEW.Metier2, NEW.SafeName, NEW.BAM_ID, NEW.AppName, NEW.Instance, NEW.AppStatus,
+            NEW.EntitlementOwnerUID, NEW.EntitlementOwnerName, NEW.EntitlementOwnerMetier,
+            NEW.EntitlementOwnerSite, NEW.NB_Accounts, NEW.SafeCreationDate, NEW.LastUsedHumanDate,
+            NEW.ImportDate, NEW.Assignee, NEW.Action, NEW.Remediation, NEW.Comments,
+            NEW.NbSafeUsers, NEW.NbSafeUsersWithOwnerRight, NEW.NbSafeUsersWithBreakglassRight,
+            NEW.NbSafeUsersWithDEVRight, NEW.NbSafeUsersWithConsultRight, NEW.ImportDate
+        );
+
+        -- Log in history
+        INSERT INTO history (report_id, present_on)
+        VALUES (NEW.id, CURDATE());
+
+    -- Case 2: SafeName exists, and ImportDate is newer — update metadata
+    ELSEIF NEW.ImportDate > existing_date THEN
+        UPDATE metadata
+        SET
+            id = NEW.id,
+            Metier2 = NEW.Metier2,
+            BAM_ID = NEW.BAM_ID,
+            AppName = NEW.AppName,
+            Instance = NEW.Instance,
+            AppStatus = NEW.AppStatus,
+            EntitlementOwnerUID = NEW.EntitlementOwnerUID,
+            EntitlementOwnerName = NEW.EntitlementOwnerName,
+            EntitlementOwnerMetier = NEW.EntitlementOwnerMetier,
+            EntitlementOwnerSite = NEW.EntitlementOwnerSite,
+            NB_Accounts = NEW.NB_Accounts,
+            SafeCreationDate = NEW.SafeCreationDate,
+            LastUsedHumanDate = NEW.LastUsedHumanDate,
+            ImportDate = NEW.ImportDate,
+            Assignee = NEW.Assignee,
+            Action = NEW.Action,
+            Remediation = NEW.Remediation,
+            Comments = NEW.Comments,
+            NbSafeUsers = NEW.NbSafeUsers,
+            NbSafeUsersWithOwnerRight = NEW.NbSafeUsersWithOwnerRight,
+            NbSafeUsersWithBreakglassRight = NEW.NbSafeUsersWithBreakglassRight,
+            NbSafeUsersWithDEVRight = NEW.NbSafeUsersWithDEVRight,
+            NbSafeUsersWithConsultRight = NEW.NbSafeUsersWithConsultRight,
+            latest_import_date = NEW.ImportDate
+        WHERE SafeName = NEW.SafeName;
+
+        -- Log in history
+        INSERT INTO history (report_id, present_on)
+        VALUES (NEW.id, CURDATE());
+    END IF;
+END $$
+
+DELIMITER ;
+
+
