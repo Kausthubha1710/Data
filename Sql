@@ -63,43 +63,53 @@ CREATE TABLE history (
     FOREIGN KEY (report_id) REFERENCES SafeData(id)
 );
 
--- Declare variables
+-- Declare a flag variable to stop the loop when all rows are fetched
 DECLARE done INT DEFAULT 0;
+
+-- Declare variables to store each row from SafeData as we iterate
 DECLARE v_id INT;
 DECLARE v_safename VARCHAR(255);
 DECLARE v_import_date DATE;
 
--- Cursor to loop through SafeData
+-- Declare a cursor to select all rows from SafeData table
 DECLARE cur CURSOR FOR
   SELECT id, SafeName, ImportDate FROM SafeData;
 
+-- Tell MySQL what to do when the cursor reaches the end of the table
+-- In this case, we set the 'done' flag to 1 so the loop can stop
 DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = 1;
 
--- Open the cursor
+-- Open the cursor to start reading rows
 OPEN cur;
 
+-- Start the loop that reads one row at a time from SafeData
 read_loop: LOOP
+  -- Fetch the next row into our declared variables
   FETCH cur INTO v_id, v_safename, v_import_date;
+
+  -- If we have no more rows, exit the loop
   IF done THEN
     LEAVE read_loop;
   END IF;
 
-  -- Check if exact (SafeName, id) exists in metadata
+  -- Check if the SafeName + id combo is already present in metadata table
   IF NOT EXISTS (
     SELECT 1 FROM metadata WHERE SafeName = v_safename AND id = v_id
   ) THEN
-    -- If not, insert this row into metadata
+    -- If not found, insert this row into metadata
     INSERT INTO metadata (id, SafeName, latest_import_date)
     VALUES (v_id, v_safename, v_import_date);
   
   ELSE
-    -- If SafeName already exists, update latest_import_date if newer
+    -- If already exists, check if ImportDate is newer than what's in metadata
+    -- If yes, then update latest_import_date in metadata
     UPDATE metadata
     SET latest_import_date = v_import_date
     WHERE SafeName = v_safename AND latest_import_date < v_import_date;
   END IF;
 
+-- End of loop, go to next row
 END LOOP;
 
--- Close the cursor
+-- Close the cursor after processing all rows
 CLOSE cur;
