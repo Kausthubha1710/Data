@@ -116,32 +116,31 @@ CLOSE cur;
 
 
 
--- Step 1: Change the delimiter so we can write multi-line trigger bodies
+-- 🔁 Set custom delimiter to allow BEGIN...END blocks
 DELIMITER $$
 
--- 🔁 TRIGGER 1: Run after a new row is inserted into metadata
+-- 🔘 Trigger for INSERT: log every new entry to history
 CREATE TRIGGER trg_after_metadata_insert
 AFTER INSERT ON metadata
 FOR EACH ROW
 BEGIN
-    -- ⏺ Automatically insert a new record into history table
-    -- to record the first import of this report_id (metadata.id)
+    -- 📝 Log the newly inserted metadata into the history table
     INSERT INTO history (report_id, present_on)
     VALUES (NEW.id, NEW.latest_import_date);
 END$$
 
--- 🔁 TRIGGER 2: Run after an existing row in metadata is updated
+-- 🔁 Trigger for UPDATE: only log if date changed
 CREATE TRIGGER trg_after_metadata_update
 AFTER UPDATE ON metadata
 FOR EACH ROW
 BEGIN
-    -- 🧠 Only log to history if the latest_import_date has changed
+    -- 🧠 Check if the date has changed
     IF NEW.latest_import_date <> OLD.latest_import_date THEN
-        -- ⏺ Record the change into history
+        -- ⏺ Record the change into the history table
         INSERT INTO history (report_id, present_on)
         VALUES (NEW.id, NEW.latest_import_date);
     END IF;
 END$$
 
--- Step 2: Revert delimiter to default
+-- 🔚 Reset delimiter back to semicolon
 DELIMITER ;
