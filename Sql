@@ -1,146 +1,135 @@
-CREATE TABLE SafeData (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    Metier2 VARCHAR(255),
-    SafeName VARCHAR(255),
-    BAM_ID INT,
-    AppName VARCHAR(255),
-    Instance VARCHAR(255),
-    AppStatus VARCHAR(255),
-    EntitlementOwnerUID VARCHAR(255),
-    EntitlementOwnerName VARCHAR(255),
-    EntitlementOwnerMetier VARCHAR(255),
-    EntitlementOwnerSite VARCHAR(255),
-    NB_Accounts INT,
-    SafeCreationDate DATETIME,
-    LastUsedHumanDate DATETIME,
-    ImportDate DATETIME,
-    Assignee VARCHAR(255),
-    Action VARCHAR(255),
-    Remediation VARCHAR(255),
-    Comments VARCHAR(255),
-    NbSafeUsers INT,
-    NbSafeUsersWithOwnerRight INT,
-    NbSafeUsersWithBreakglassRight INT,
-    NbSafeUsersWithDEVRight INT,
-    NbSafeUsersWithConsultRight INT,
-    UNIQUE KEY (id, SafeName)
+-- Assuming you have a temporary table or staging table `incoming_data`
+-- which contains today's received file data.
+
+-- STEP 1: Insert NEW records into main table
+INSERT INTO PAM_Cyberarck_reportname (
+    Instance, Metier2, SafeName, BAM_ID, AppName, AppStatus,
+    EntitlementOwnerUID, EntitlementOwnerName, EntitlementOwnerMetier,
+    EntitlementOwnerSite, NbSafeUsers, NbSafeUsersWithOwnerRight,
+    NbSafeUsersWithBreakglassRight, NbSafeUsersWithDEVRight,
+    NbSafeUsersWithConsultRight, SafeCreationDate, `LastUsed HumanDate`,
+    ImportDate, Assignee, Action, Remediation, Comments
+)
+SELECT 
+    i.Instance, i.Metier2, i.SafeName, i.BAM_ID, i.AppName, i.AppStatus,
+    i.EntitlementOwnerUID, i.EntitlementOwnerName, i.EntitlementOwnerMetier,
+    i.EntitlementOwnerSite, i.NbSafeUsers, i.NbSafeUsersWithOwnerRight,
+    i.NbSafeUsersWithBreakglassRight, i.NbSafeUsersWithDEVRight,
+    i.NbSafeUsersWithConsultRight, i.SafeCreationDate, i.`LastUsed HumanDate`,
+    CURRENT_DATE, i.Assignee, i.Action, i.Remediation, i.Comments
+FROM incoming_data i
+LEFT JOIN PAM_Cyberarck_reportname p
+  ON i.SafeName = p.SafeName
+WHERE p.SafeName IS NULL;
+
+-- STEP 2: Update existing records' ImportDate
+UPDATE PAM_Cyberarck_reportname p
+JOIN incoming_data i ON p.SafeName = i.SafeName
+SET 
+    p.Instance = i.Instance,
+    p.Metier2 = i.Metier2,
+    p.BAM_ID = i.BAM_ID,
+    p.AppName = i.AppName,
+    p.AppStatus = i.AppStatus,
+    p.EntitlementOwnerUID = i.EntitlementOwnerUID,
+    p.EntitlementOwnerName = i.EntitlementOwnerName,
+    p.EntitlementOwnerMetier = i.EntitlementOwnerMetier,
+    p.EntitlementOwnerSite = i.EntitlementOwnerSite,
+    p.NbSafeUsers = i.NbSafeUsers,
+    p.NbSafeUsersWithOwnerRight = i.NbSafeUsersWithOwnerRight,
+    p.NbSafeUsersWithBreakglassRight = i.NbSafeUsersWithBreakglassRight,
+    p.NbSafeUsersWithDEVRight = i.NbSafeUsersWithDEVRight,
+    p.NbSafeUsersWithConsultRight = i.NbSafeUsersWithConsultRight,
+    p.SafeCreationDate = i.SafeCreationDate,
+    p.`LastUsed HumanDate` = i.`LastUsed HumanDate`,
+    p.ImportDate = CURRENT_DATE,
+    p.Assignee = i.Assignee,
+    p.Action = i.Action,
+    p.Remediation = i.Remediation,
+    p.Comments = i.Comments
+WHERE EXISTS (
+    SELECT 1 FROM incoming_data i2
+    WHERE i2.SafeName = p.SafeName
 );
 
-CREATE TABLE metadata (
-    id INT,
-    Metier2 VARCHAR(255),
-    SafeName VARCHAR(255),
-    BAM_ID INT,
-    AppName VARCHAR(255),
-    Instance VARCHAR(255),
-    AppStatus VARCHAR(255),
-    EntitlementOwnerUID VARCHAR(255),
-    EntitlementOwnerName VARCHAR(255),
-    EntitlementOwnerMetier VARCHAR(255),
-    EntitlementOwnerSite VARCHAR(255),
-    NB_Accounts INT,
-    SafeCreationDate DATETIME,
-    LastUsedHumanDate DATETIME,
-    ImportDate DATETIME,
-    Assignee VARCHAR(255),
-    Action VARCHAR(255),
-    Remediation VARCHAR(255),
-    Comments VARCHAR(255),
-    NbSafeUsers INT,
-    NbSafeUsersWithOwnerRight INT,
-    NbSafeUsersWithBreakglassRight INT,
-    NbSafeUsersWithDEVRight INT,
-    NbSafeUsersWithConsultRight INT,
-    latest_import_date DATETIME,
-    PRIMARY KEY (SafeName)  -- assumes SafeName is unique
-);
-
-
-CREATE TABLE history (
-    sno INT AUTO_INCREMENT PRIMARY KEY,
-    report_id INT,
-    present_on DATE,
-    FOREIGN KEY (report_id) REFERENCES SafeData(id)
-);
-
--- Declare a flag variable to stop the loop when all rows are fetched
-DECLARE done INT DEFAULT 0;
-
--- Declare variables to store each row from SafeData as we iterate
-DECLARE v_id INT;
-DECLARE v_safename VARCHAR(255);
-DECLARE v_import_date DATE;
-
--- Declare a cursor to select all rows from SafeData table
-DECLARE cur CURSOR FOR
-  SELECT id, SafeName, ImportDate FROM SafeData;
-
--- Tell MySQL what to do when the cursor reaches the end of the table
--- In this case, we set the 'done' flag to 1 so the loop can stop
-DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = 1;
-
--- Open the cursor to start reading rows
-OPEN cur;
-
--- Start the loop that reads one row at a time from SafeData
-read_loop: LOOP
-  -- Fetch the next row into our declared variables
-  FETCH cur INTO v_id, v_safename, v_import_date;
-
-  -- If we have no more rows, exit the loop
-  IF done THEN
-    LEAVE read_loop;
-  END IF;
-
-  -- Check if the SafeName + id combo is already present in metadata table
-  IF NOT EXISTS (
-    SELECT 1 FROM metadata WHERE SafeName = v_safename AND id = v_id
-  ) THEN
-    -- If not found, insert this row into metadata
-    INSERT INTO metadata (id, SafeName, latest_import_date)
-    VALUES (v_id, v_safename, v_import_date);
-  
-  ELSE
-    -- If already exists, check if ImportDate is newer than what's in metadata
-    -- If yes, then update latest_import_date in metadata
-    UPDATE metadata
-    SET latest_import_date = v_import_date
-    WHERE SafeName = v_safename AND latest_import_date < v_import_date;
-  END IF;
-
--- End of loop, go to next row
-END LOOP;
-
--- Close the cursor after processing all rows
-CLOSE cur;
+-- STEP 3: Insert into metadata table for each received file
+INSERT INTO PAM_Cyberarck_reportname_metadata (SafeId, SafeName, present_on)
+SELECT 
+    p.id, p.SafeName, CURRENT_DATE
+FROM PAM_Cyberarck_reportname p
+JOIN incoming_data i ON i.SafeName = p.SafeName;
 
 
 
--- 🔁 Set custom delimiter to allow BEGIN...END blocks
-DELIMITER $$
-
--- 🔘 Trigger for INSERT: log every new entry to history
-CREATE TRIGGER trg_after_metadata_insert
-AFTER INSERT ON metadata
-FOR EACH ROW
 BEGIN
-    -- 📝 Log the newly inserted metadata into the history table
-    INSERT INTO history (report_id, present_on)
-    VALUES (NEW.id, NEW.latest_import_date);
-END$$
 
--- 🔁 Trigger for UPDATE: only log if date changed
-CREATE TRIGGER trg_after_metadata_update
-AFTER UPDATE ON metadata
-FOR EACH ROW
-BEGIN
-    -- 🧠 Check if the date has changed
-    IF NEW.latest_import_date <> OLD.latest_import_date THEN
-        -- ⏺ Record the change into the history table
-        INSERT INTO history (report_id, present_on)
-        VALUES (NEW.id, NEW.latest_import_date);
-    END IF;
-END$$
+  FOR each file_record IN today's_received_files:
 
--- 🔚 Reset delimiter back to semicolon
-DELIMITER ;
+    SET safe_name = file_record.SafeName
+
+    -- Check if the SafeName already exists in the main table
+    IF safe_name EXISTS IN PAM_Cyberarck_reportname THEN
+
+        -- CASE 1: File already exists → Update its ImportDate and other fields
+        UPDATE PAM_Cyberarck_reportname
+        SET 
+          Instance = file_record.Instance,
+          Metier2 = file_record.Metier2,
+          BAM_ID = file_record.BAM_ID,
+          AppName = file_record.AppName,
+          AppStatus = file_record.AppStatus,
+          EntitlementOwnerUID = file_record.EntitlementOwnerUID,
+          EntitlementOwnerName = file_record.EntitlementOwnerName,
+          EntitlementOwnerMetier = file_record.EntitlementOwnerMetier,
+          EntitlementOwnerSite = file_record.EntitlementOwnerSite,
+          NbSafeUsers = file_record.NbSafeUsers,
+          NbSafeUsersWithOwnerRight = file_record.NbSafeUsersWithOwnerRight,
+          NbSafeUsersWithBreakglassRight = file_record.NbSafeUsersWithBreakglassRight,
+          NbSafeUsersWithDEVRight = file_record.NbSafeUsersWithDEVRight,
+          NbSafeUsersWithConsultRight = file_record.NbSafeUsersWithConsultRight,
+          SafeCreationDate = file_record.SafeCreationDate,
+          LastUsed_HumanDate = file_record.LastUsed_HumanDate,
+          ImportDate = CURRENT_DATE,
+          Assignee = file_record.Assignee,
+          Action = file_record.Action,
+          Remediation = file_record.Remediation,
+          Comments = file_record.Comments
+        WHERE SafeName = safe_name
+
+    ELSE
+
+        -- CASE 3: New file → Insert into main table
+        INSERT INTO PAM_Cyberarck_reportname (
+          Instance, Metier2, SafeName, BAM_ID, AppName, AppStatus,
+          EntitlementOwnerUID, EntitlementOwnerName, EntitlementOwnerMetier,
+          EntitlementOwnerSite, NbSafeUsers, NbSafeUsersWithOwnerRight,
+          NbSafeUsersWithBreakglassRight, NbSafeUsersWithDEVRight,
+          NbSafeUsersWithConsultRight, SafeCreationDate, LastUsed_HumanDate,
+          ImportDate, Assignee, Action, Remediation, Comments
+        )
+        VALUES (
+          file_record.Instance, file_record.Metier2, file_record.SafeName, file_record.BAM_ID,
+          file_record.AppName, file_record.AppStatus, file_record.EntitlementOwnerUID,
+          file_record.EntitlementOwnerName, file_record.EntitlementOwnerMetier,
+          file_record.EntitlementOwnerSite, file_record.NbSafeUsers,
+          file_record.NbSafeUsersWithOwnerRight, file_record.NbSafeUsersWithBreakglassRight,
+          file_record.NbSafeUsersWithDEVRight, file_record.NbSafeUsersWithConsultRight,
+          file_record.SafeCreationDate, file_record.LastUsed_HumanDate,
+          CURRENT_DATE, file_record.Assignee, file_record.Action,
+          file_record.Remediation, file_record.Comments
+        )
+
+    END IF
+
+    -- In both cases (new or existing file), log arrival in metadata table
+    GET id FROM PAM_Cyberarck_reportname WHERE SafeName = safe_name
+
+    INSERT INTO PAM_Cyberarck_reportname_metadata (
+      SafeId, SafeName, present_on
+    ) VALUES (
+      id, safe_name, CURRENT_DATE
+    )
+
+  END FOR
+
+END
