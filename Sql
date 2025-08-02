@@ -32,104 +32,102 @@ def parse_xml_file(xml_file, collection_config):
     collection_element = root.find(f'.//{namespace}{collection_config["collection"]}')
     if collection_element is None:
         print(f"Collection not found for tag {collection_config['collection']} in {xml_file}")
-        return {}
+        return []
 
+    data = []
     elements = collection_element.findall(f'{namespace}*')
-    data = {}
-
-    if elements:
-        for element in elements:
-            if collection_config["attribute_name"] in element.attrib and \
-               element.attrib.get(collection_config["attribute_name"]) == collection_config["attribute_value"]:
-
-                row = OrderedDict()
-                row['Instance'] = element.attrib.get('Instance', '')
-                row['Metier2'] = element.attrib.get('Metier2', '')
-                row['SafeName'] = element.attrib.get('SafeName', '')
-                row['BAM_ID'] = element.attrib.get('BAM_ID', '')
-                row['AppName'] = element.attrib.get('AppName', '')
-                row['AppStatus'] = element.attrib.get('AppStatus', '')
-                row['EntitlementOwnerUID'] = element.attrib.get('EntitlementOwnerUID', '')
-                row['EntitlementOwnerName'] = element.attrib.get('EntitlementOwnerName', '')
-                row['EntitlementOwnerMetier'] = element.attrib.get('EntitlementOwnerMetier', '')
-                row['EntitlementOwnerSite'] = element.attrib.get('EntitlementOwnerSite', '')
-                row['NbSafeUsers'] = element.attrib.get('NbSafeUsers', '')
-                row['NbSafeUsersWithOwnerRight'] = element.attrib.get('NbSafeUsersWithOwnerRight', '')
-                row['NbSafeUsersWithBreakglassRight'] = element.attrib.get('NbSafeUsersWithBreakglassRight', '')
-                row['NbSafeUsersWithDEVRight'] = element.attrib.get('NbSafeUsersWithDEVRight', '')
-                row['NbSafeUsersWithConsultRight'] = element.attrib.get('NbSafeUsersWithConsultRight', '')
-                row['SafeCreationDate'] = element.attrib.get('SafeCreationDate', '')
-                row['Assignee'] = element.attrib.get('Assignee', '')
-                row['Action'] = element.attrib.get('Action', '')
-                row['Remediation'] = element.attrib.get('Remediation', '')
-                row['Comments'] = element.attrib.get('Comments', '')
-                row['ImportDate'] = date.today().strftime("%Y-%m-%d")
-
-                safe_name = row['SafeName']
-                if safe_name:
-                    data[safe_name] = row
-    else:
+    if not elements:
         print(f"No elements found for tag {collection_config['collection']} in {xml_file}")
+        return []
 
+    for element in elements:
+        if (collection_config["attribute_name"] in element.attrib and
+            element.attrib.get(collection_config["attribute_name"]) == collection_config["attribute_value"]):
+
+            row = OrderedDict()
+            row['Instance'] = element.attrib.get('Instance', '')
+            row['Metier2'] = element.attrib.get('Metier2', '')
+            row['SafeName'] = element.attrib.get('SafeName', '')
+            row['BAM_ID'] = element.attrib.get('BAM_ID', '')
+            row['AppName'] = element.attrib.get('AppName', '')
+            row['AppStatus'] = element.attrib.get('AppStatus', '')
+            row['EntitlementOwnerUID'] = element.attrib.get('EntitlementOwnerUID', '')
+            row['EntitlementOwnerName'] = element.attrib.get('EntitlementOwnerName', '')
+            row['EntitlementOwnerMetier'] = element.attrib.get('EntitlementOwnerMetier', '')
+            row['EntitlementOwnerSite'] = element.attrib.get('EntitlementOwnerSite', '')
+            row['NbSafeUsers'] = element.attrib.get('NbSafeUsers', '')
+            row['NbSafeUsersWithOwnerRight'] = element.attrib.get('NbSafeUsersWithOwnerRight', '')
+            row['NbSafeUsersWithBreakglassRight'] = element.attrib.get('NbSafeUsersWithBreakglassRight', '')
+            row['NbSafeUsersWithDEVRight'] = element.attrib.get('NbSafeUsersWithDEVRight', '')
+            row['NbSafeUserswithConsultRight'] = element.attrib.get('NbSafeUsersWithConsultRight', '')
+            row['SafeCreationDate'] = element.attrib.get('SafeCreationDate', '')
+            row['Assignee'] = element.attrib.get('Assignee', '')
+            row['Action'] = element.attrib.get('Action', '')
+            row['Remediation'] = element.attrib.get('Remediation', '')
+            row['Comments'] = element.attrib.get('Comments', '')
+            row['ImportDate'] = date.today().strftime("%Y-%m-%d")
+
+            data.append(row)
     return data
 
-def write_data_to_json(data, output_filename):
-    if data:
-        with open(output_filename, 'w', encoding='utf-8') as json_file:
-            json.dump(data, json_file, indent=4)
-        print(f"Data written to {output_filename}")
+def merge_with_existing_data(new_data, json_file_path):
+    if os.path.exists(json_file_path):
+        with open(json_file_path, 'r', encoding='utf-8') as f:
+            existing_data = json.load(f)
     else:
-        print("No data to write.")
+        existing_data = []
+
+    existing_data_by_key = { (row['SafeName']): row for row in existing_data }
+
+    for row in new_data:
+        existing_data_by_key[row['SafeName']] = row
+
+    # Retain all records, only update ImportDate for matched records
+    for key in existing_data_by_key:
+        if key not in [r['SafeName'] for r in new_data]:
+            existing_data_by_key[key]['ImportDate'] = date.today().strftime("%Y-%m-%d")
+
+    merged_data = list(existing_data_by_key.values())
+    # Reassign IDs starting from 1
+    for idx, row in enumerate(sorted(merged_data, key=lambda x: x['SafeName'])):
+        row['id'] = idx + 1
+
+    return merged_data
+
+def write_data_to_json(data, output_filename):
+    with open(output_filename, 'w', encoding='utf-8') as json_file:
+        json.dump(data, json_file, indent=4)
+    print(f"Data written to {output_filename}")
 
 def process_main_table(xml_dir, output_dir, collection_configs):
-    for root, dirs, files in os.walk(xml_dir):
+    for root_dir, dirs, files in os.walk(xml_dir):
         for filename in files:
             if filename.endswith('.xml'):
-                filename_no_ext = os.path.splitext(filename)[0]
-                suffix = filename_no_ext.split('-')[-1].strip()
+                suffix = os.path.splitext(filename)[0].split('-')[-1].strip()
                 table_name = f'PAM_Cyberarck_reportname_{suffix}'
                 json_file_path = os.path.join(output_dir, f'{table_name}.json')
-                xml_file_path = os.path.join(root, filename)
+                xml_file_path = os.path.join(root_dir, filename)
 
                 collection_config = collection_configs.get(suffix)
-                if collection_config is None:
+                if not collection_config:
                     print(f"No collection config found for file {filename}")
                     continue
 
-                today_data = parse_xml_file(xml_file_path, collection_config)
-
-                try:
-                    with open(json_file_path, 'r', encoding='utf-8') as f:
-                        existing_data = json.load(f)
-                except FileNotFoundError:
-                    existing_data = []
-
-                existing_data_dict = {entry['SafeName']: entry for entry in existing_data}
-                all_keys = set(existing_data_dict.keys()) | set(today_data.keys())
-                updated_data = []
-
-                for idx, key in enumerate(sorted(all_keys), start=1):
-                    base_record = existing_data_dict.get(key, {})
-                    today_record = today_data.get(key)
-                    if today_record:
-                        base_record.update(today_record)
-                    base_record['id'] = idx
-                    base_record['ImportDate'] = date.today().strftime("%Y-%m-%d")
-                    updated_data.append(base_record)
-
-                write_data_to_json(updated_data, json_file_path)
+                new_data = parse_xml_file(xml_file_path, collection_config)
+                merged_data = merge_with_existing_data(new_data, json_file_path)
+                write_data_to_json(merged_data, json_file_path)
 
 def main():
     parser = argparse.ArgumentParser(description='Process XML files')
-    parser.add_argument('--table', choices=['main'], help='Specify which table to process')
+    parser.add_argument('--table', choices=['main'], required=True, help='Specify which table to process')
     args = parser.parse_args()
 
     config, collection_configs = load_config('config.txt')
     xml_dir = config.get('xml_dir')
     output_dir = config.get('output_dir')
 
-    if xml_dir is None or output_dir is None:
-        print("Error: Could not find directory paths in config.txt file.")
+    if not xml_dir or not output_dir:
+        print("Error: Missing xml_dir or output_dir in config.txt")
         return
 
     if not os.path.exists(output_dir):
@@ -137,8 +135,6 @@ def main():
 
     if args.table == 'main':
         process_main_table(xml_dir, output_dir, collection_configs)
-    else:
-        print("Error: Invalid table specified")
 
 if __name__ == "__main__":
     main()
