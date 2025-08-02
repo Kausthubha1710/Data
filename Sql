@@ -1,3 +1,9 @@
+n the tablename PAM_cyberark_reportname.
+PAM_cyberark_ is the common prefix for all tables and reportname varies based on the filename.
+Suppose file name is PAM Dashboard Management - SA09.xml is the file then table name should be PAM_cyberark_SA09 
+and the 2nd table PAM_cyberark_SA09_metadata.
+
+
 import pandas as pd
 import os
 from pathlib import Path
