@@ -1,3 +1,138 @@
+Suppose there are 20 files in the beginning. 
+The data is reflected into metadata table accordingly.
+Case 1:
+Suppose "abc" File is received on 1st august the import datetime is 1st august then this is entered into metadata(2nd) table.
+Now "abc" File is received on 2nd august. The import date of "abc" will be replaced to 2nd august in first table. In the metadata table also this is inserted.
+So now metadata table consists data that received on 1st august and 2nd august.
+Case 2:
+Suppose "abc" File is received on 1st august the import datetime is 1st august then this is entered into metadata(2nd) table.
+Now "abc" File is not received on 2nd august. The import date of "abc" will not be replaced to 2nd august in first table. In the metadata table nothing changes
+So now metadata table consists data that received only on 1st august.
+Case 3:
+Apart from those 20 files Suppose a new file "xyz" arrived within all other 20 files on 4th august then along with the 20 files, "xyz" Data will also be inputed into metadata table.
+
+Now did you understand the requirement? 
+Now tell me what you understand with an example of 10 files. I need to see all cases
+
+
+🎯 Setup:
+Initial Files (10):
+
+Copy
+Edit
+SafeA, SafeB, SafeC, SafeD, SafeE, SafeF, SafeG, SafeH, SafeI, SafeJ
+🗓️ Simulation from August 1st to August 5th:
+📅 Day 1: August 1
+All 10 files arrive.
+
+PAM_Cyberarck_reportname: Insert 10 rows with ImportDate = 2025-08-01
+
+PAM_Cyberarck_reportname_metadata: Insert 10 rows with present_on = 2025-08-01
+
+📅 Day 2: August 2
+Only these files are received: SafeA, SafeB, SafeC, SafeD, SafeE
+
+PAM_Cyberarck_reportname: Update ImportDate for SafeA-E to 2025-08-02
+
+PAM_Cyberarck_reportname_metadata: Insert 5 rows for SafeA-E with present_on = 2025-08-02
+
+SafeF–J: no changes
+
+📅 Day 3: August 3
+Only SafeA, SafeC are received.
+
+reportname: Update ImportDate for SafeA, SafeC to 2025-08-03
+
+metadata: Insert 2 rows for SafeA, SafeC with present_on = 2025-08-03
+
+📅 Day 4: August 4
+All 10 original files are received again + new file SafeX (💡 Case 3)
+
+reportname:
+
+Update ImportDate for SafeA-J to 2025-08-04
+
+Insert new row for SafeX with ImportDate = 2025-08-04
+
+metadata: Insert 11 rows (SafeA-J + SafeX) with present_on = 2025-08-04
+
+📅 Day 5: August 5
+Only SafeF, SafeH, SafeX are received
+
+reportname: Update ImportDate for SafeF, SafeH, SafeX to 2025-08-05
+
+metadata: Insert 3 rows for SafeF, SafeH, SafeX with present_on = 2025-08-05
+
+📊 Final Snapshot Example:
+🗂️ PAM_Cyberarck_reportname (Latest Status Table)
+id	SafeName	ImportDate
+1	SafeA	2025-08-04
+2	SafeB	2025-08-04
+3	SafeC	2025-08-04
+4	SafeD	2025-08-04
+5	SafeE	2025-08-04
+6	SafeF	2025-08-05
+7	SafeG	2025-08-04
+8	SafeH	2025-08-05
+9	SafeI	2025-08-04
+10	SafeJ	2025-08-04
+11	SafeX	2025-08-05
+
+🧾 PAM_Cyberarck_reportname_metadata (Arrival History Table)
+id	SafeId	SafeName	present_on
+1	1	SafeA	2025-08-01
+2	2	SafeB	2025-08-01
+3	3	SafeC	2025-08-01
+4	4	SafeD	2025-08-01
+5	5	SafeE	2025-08-01
+6	6	SafeF	2025-08-01
+7	7	SafeG	2025-08-01
+8	8	SafeH	2025-08-01
+9	9	SafeI	2025-08-01
+10	10	SafeJ	2025-08-01
+11	1	SafeA	2025-08-02
+12	2	SafeB	2025-08-02
+13	3	SafeC	2025-08-02
+14	4	SafeD	2025-08-02
+15	5	SafeE	2025-08-02
+16	1	SafeA	2025-08-03
+17	3	SafeC	2025-08-03
+18	1	SafeA	2025-08-04
+19	2	SafeB	2025-08-04
+20	3	SafeC	2025-08-04
+21	4	SafeD	2025-08-04
+22	5	SafeE	2025-08-04
+23	6	SafeF	2025-08-04
+24	7	SafeG	2025-08-04
+25	8	SafeH	2025-08-04
+26	9	SafeI	2025-08-04
+27	10	SafeJ	2025-08-04
+28	11	SafeX	2025-08-04
+29	6	SafeF	2025-08-05
+30	8	SafeH	2025-08-05
+31	11	SafeX	2025-08-05
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 n the tablename PAM_cyberark_reportname.
 PAM_cyberark_ is the common prefix for all tables and reportname varies based on the filename.
 Suppose file name is PAM Dashboard Management - SA09.xml is the file then table name should be PAM_cyberark_SA09 
