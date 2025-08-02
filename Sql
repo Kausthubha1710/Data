@@ -224,3 +224,246 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import os
+import xml.etree.ElementTree as ET
+import json
+import argparse
+from collections import OrderedDict
+from datetime import date
+
+def load_config(config_file):
+    config = {}
+    collection_configs = {}
+    with open(config_file, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if line and '=' in line:
+                key, value = line.split('=', 1)
+                config[key.strip()] = value.strip()
+            elif ':' in line:
+                filename, params = line.split(':', 1)
+                collection, attribute_name, attribute_value = params.split(',')
+                collection_configs[filename.strip()] = {
+                    "collection": collection.strip(),
+                    "attribute_name": attribute_name.strip(),
+                    "attribute_value": attribute_value.strip()
+                }
+    return config, collection_configs
+
+def parse_xml_file(xml_file, collection_config):
+    tree = ET.parse(xml_file)
+    root = tree.getroot()
+    namespace = '{' + root.tag.split('}')[0].strip('{') + '}'
+
+    collection_element = root.find(f'.//{namespace}{collection_config["collection"]}')
+    if collection_element is None:
+        print(f"Collection not found for tag {collection_config['collection']} in {xml_file}")
+        return {}
+
+    elements = collection_element.findall(f'{namespace}*')
+    data = {}
+
+    if elements:
+        for element in elements:
+            if collection_config["attribute_name"] in element.attrib and \
+               element.attrib.get(collection_config["attribute_name"]) == collection_config["attribute_value"]:
+
+                row = OrderedDict()
+                row['Instance'] = element.attrib.get('Instance', '')
+                row['Metier2'] = element.attrib.get('Metier2', '')
+                row['SafeName'] = element.attrib.get('SafeName', '')
+                row['BAM_ID'] = element.attrib.get('BAM_ID', '')
+                row['AppName'] = element.attrib.get('AppName', '')
+                row['AppStatus'] = element.attrib.get('AppStatus', '')
+                row['EntitlementOwnerUID'] = element.attrib.get('EntitlementOwnerUID', '')
+                row['EntitlementOwnerName'] = element.attrib.get('EntitlementOwnerName', '')
+                row['EntitlementOwnerMetier'] = element.attrib.get('EntitlementOwnerMetier', '')
+                row['EntitlementOwnerSite'] = element.attrib.get('EntitlementOwnerSite', '')
+                row['NbSafeUsers'] = element.attrib.get('NbSafeUsers', '')
+                row['NbSafeUsersWithOwnerRight'] = element.attrib.get('NbSafeUsersWithOwnerRight', '')
+                row['NbSafeUsersWithBreakglassRight'] = element.attrib.get('NbSafeUsersWithBreakglassRight', '')
+                row['NbSafeUsersWithDEVRight'] = element.attrib.get('NbSafeUsersWithDEVRight', '')
+                row['NbSafeUsersWithConsultRight'] = element.attrib.get('NbSafeUsersWithConsultRight', '')
+                row['SafeCreationDate'] = element.attrib.get('SafeCreationDate', '')
+                row['ImportDate'] = date.today().strftime("%Y-%m-%d")
+                row['Assignee'] = element.attrib.get('Assignee', '')
+                row['Action'] = element.attrib.get('Action', '')
+                row['Remediation'] = element.attrib.get('Remediation', '')
+                row['Comments'] = element.attrib.get('Comments', '')
+
+                safe_name = row['SafeName']
+                if safe_name:
+                    data[safe_name] = row
+    else:
+        print(f"No elements found for tag {collection_config['collection']} in {xml_file}")
+
+    return data
+
+def write_data_to_json(data, output_filename):
+    if data:
+        with open(output_filename, 'w', encoding='utf-8') as json_file:
+            json.dump(data, json_file, indent=4)
+        print(f"Data written to {output_filename}")
+    else:
+        print("No data to write.")
+
+def load_metadata_json(json_file_path):
+    try:
+        with open(json_file_path, 'r', encoding='utf-8') as json_file:
+            return json.load(json_file)
+    except FileNotFoundError:
+        return []
+
+def update_metadata_json(metadata_data, json_file_path):
+    existing_metadata = load_metadata_json(json_file_path)
+    combined_metadata = existing_metadata + metadata_data
+    with open(json_file_path, 'w', encoding='utf-8') as json_file:
+        json.dump(combined_metadata, json_file, indent=4)
+    print(f"Metadata updated in {json_file_path}")
+
+def process_main_table(xml_dir, output_dir, collection_configs):
+    for root, dirs, files in os.walk(xml_dir):
+        for filename in files:
+            if filename.endswith('.xml'):
+                filename_no_ext = os.path.splitext(filename)[0]
+                suffix = filename_no_ext.split('-')[-1].strip()
+                table_name = f'PAM_Cyberarck_reportname_{suffix}'
+                json_file_path = os.path.join(output_dir, f'{table_name}.json')
+                xml_file_path = os.path.join(root, filename)
+
+                collection_config = collection_configs.get(suffix)
+                if collection_config is None:
+                    print(f"No collection config found for file {filename}")
+                    continue
+
+                today_data = parse_xml_file(xml_file_path, collection_config)
+
+                try:
+                    with open(json_file_path, 'r', encoding='utf-8') as f:
+                        existing_data = json.load(f)
+                except FileNotFoundError:
+                    existing_data = []
+
+                existing_data_dict = {entry['SafeName']: entry for entry in existing_data}
+                updated_data = []
+                all_keys = set(existing_data_dict.keys()) | set(today_data.keys())
+
+                id_counter = 1
+                for key in all_keys:
+                    if key in today_data:
+                        record = today_data[key]
+                    else:
+                        record = existing_data_dict[key]
+
+                    record['id'] = id_counter
+                    ordered_record = OrderedDict([('id', record['id'])] + [(k, v) for k, v in record.items() if k != 'id'])
+                    updated_data.append(ordered_record)
+                    id_counter += 1
+
+                write_data_to_json(updated_data, json_file_path)
+
+def parse_xml_file_metadata(xml_file, collection_config, output_dir, metadata_table_name, table_name):
+    tree = ET.parse(xml_file)
+    root = tree.getroot()
+    namespace = '{' + root.tag.split('}')[0].strip('{') + '}'
+
+    collection_element = root.find(f'.//{namespace}{collection_config["collection"]}')
+    if collection_element is None:
+        print(f"Collection not found for tag {collection_config['collection']} in {xml_file}")
+        return None
+
+    elements = collection_element.findall(f'{namespace}*')
+    metadata_data = []
+
+    json_file_path = os.path.join(output_dir, f'{table_name}.json')
+    try:
+        with open(json_file_path, 'r', encoding='utf-8') as json_file:
+            main_data = json.load(json_file)
+        safe_name_to_id = {row['SafeName']: row['id'] for row in main_data}
+    except FileNotFoundError:
+        safe_name_to_id = {}
+
+    metadata_json_file_path = os.path.join(output_dir, f'{metadata_table_name}.json')
+    try:
+        with open(metadata_json_file_path, 'r', encoding='utf-8') as json_file:
+            existing_metadata = json.load(json_file)
+        last_id = max(item['id'] for item in existing_metadata) if existing_metadata else 0
+    except FileNotFoundError:
+        last_id = 0
+
+    for element in elements:
+        if collection_config["attribute_name"] in element.attrib and \
+           element.attrib.get(collection_config["attribute_name"]) == collection_config["attribute_value"]:
+
+            safe_name = element.attrib.get('SafeName', '')
+            metadata_row = OrderedDict()
+            metadata_row['id'] = last_id + 1
+            metadata_row['SafeId'] = safe_name_to_id.get(safe_name, None)
+            metadata_row['SafeName'] = safe_name
+            metadata_row['present_on'] = date.today().strftime("%Y-%m-%d")
+            metadata_data.append(metadata_row)
+            last_id += 1
+
+    return metadata_data
+
+def process_metadata_table(xml_dir, output_dir, collection_configs):
+    for root, dirs, files in os.walk(xml_dir):
+        for filename in files:
+            if filename.endswith(".xml"):
+                filename_no_ext = os.path.splitext(filename)[0]
+                suffix = filename_no_ext.split('-')[-1].strip()
+                table_name = f'PAM_Cyberarck_reportname_{suffix}'
+                metadata_table_name = f'PAM_Cyberarck_reportname_metadata_{suffix}'
+                metadata_json_file_path = os.path.join(output_dir, f'{metadata_table_name}.json')
+                xml_file_path = os.path.join(root, filename)
+
+                collection_config = collection_configs.get(suffix)
+                if collection_config is None:
+                    print(f"No collection config found for file {filename}")
+                    continue
+
+                metadata_data = parse_xml_file_metadata(xml_file_path, collection_config, output_dir, metadata_table_name, table_name)
+
+                if metadata_data is not None:
+                    update_metadata_json(metadata_data, metadata_json_file_path)
+
+def main():
+    parser = argparse.ArgumentParser(description='Process XML files')
+    parser.add_argument('--table', choices=['main', 'metadata'], help='Specify which table to process')
+    args = parser.parse_args()
+
+    config, collection_configs = load_config('config.txt')
+    xml_dir = config.get('xml_dir')
+    output_dir = config.get('output_dir')
+
+    if xml_dir is None or output_dir is None:
+        print("Error: Could not find directory paths in config.txt file.")
+        return
+
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    if args.table == 'main':
+        process_main_table(xml_dir, output_dir, collection_configs)
+    elif args.table == 'metadata':
+        process_metadata_table(xml_dir, output_dir, collection_configs)
+    else:
+        print("Error: Invalid table specified")
+
+if __name__ == "__main__":
+    main()
