@@ -1,3 +1,134 @@
+import os
+import json
+import datetime
+import xml.etree.ElementTree as ET
+
+def extract_reportname(filename):
+    return filename.split('-')[-1].split('.')[0].strip()
+
+def get_today():
+    return datetime.date.today().isoformat()
+
+def load_existing_json(path):
+    if os.path.exists(path):
+        with open(path, 'r') as f:
+            return json.load(f)
+    return []
+
+def save_json(path, data):
+    with open(path, 'w') as f:
+        json.dump(data, f, indent=4)
+
+def parse_xml_to_records(filepath, today_str):
+    tree = ET.parse(filepath)
+    root = tree.getroot()
+
+    records = []
+    for safe in root.findall('.//Safe'):
+        record = {
+            'Instance': safe.findtext('Instance'),
+            'Metier2': safe.findtext('Metier2'),
+            'SafeName': safe.findtext('SafeName'),
+            'BAM_ID': safe.findtext('BAM_ID'),
+            'AppName': safe.findtext('AppName'),
+            'AppStatus': safe.findtext('AppStatus'),
+            'EntitlementOwnerUID': safe.findtext('EntitlementOwnerUID'),
+            'EntitlementOwnerName': safe.findtext('EntitlementOwnerName'),
+            'EntitlementOwnerMetier': safe.findtext('EntitlementOwnerMetier'),
+            'EntitlementOwnerSite': safe.findtext('EntitlementOwnerSite'),
+            'NbSafeUsers': int(safe.findtext('NbSafeUsers') or 0),
+            'NbSafeUsersWithOwnerRight': int(safe.findtext('NbSafeUsersWithOwnerRight') or 0),
+            'NbSafeUsersWithBreakglassRight': int(safe.findtext('NbSafeUsersWithBreakglassRight') or 0),
+            'NbSafeUsersWithDEVRight': int(safe.findtext('NbSafeUsersWithDEVRight') or 0),
+            'NbSafeUsersWithConsultRight': int(safe.findtext('NbSafeUsersWithConsultRight') or 0),
+            'SafeCreationDate': safe.findtext('SafeCreationDate'),
+            'LastUsed HumanDate': safe.findtext('LastUsed HumanDate'),
+            'Assignee': safe.findtext('Assignee'),
+            'Action': safe.findtext('Action'),
+            'Remediation': safe.findtext('Remediation'),
+            'Comments': safe.findtext('Comments'),
+            'ImportDate': today_str
+        }
+        records.append(record)
+    return records
+
+def generate_metadata(records, today_str):
+    metadata = []
+    for idx, record in enumerate(records):
+        metadata.append({
+            'SafeId': idx + 1,
+            'SafeName': record['SafeName'],
+            'present_on': today_str
+        })
+    return metadata
+
+def main(xml_path):
+    filename = os.path.basename(xml_path)
+    reportname = extract_reportname(filename)
+
+    main_json_path = f'PAM_Cyberarck_{reportname}.json'
+    meta_json_path = f'PAM_Cyberarck_{reportname}_metadata.json'
+
+    today_str = get_today()
+    new_records = parse_xml_to_records(xml_path, today_str)
+    old_records = load_existing_json(main_json_path)
+    combined = []
+    safename_set_today = {r['SafeName'] for r in new_records}
+
+    # Preserve old records if not present today
+    for record in old_records:
+        if record['SafeName'] not in safename_set_today:
+            combined.append(record)
+
+    # Add/replace records present today with updated ImportDate
+    for new_record in new_records:
+        existing = next((r for r in old_records if r['SafeName'] == new_record['SafeName']), None)
+        if existing:
+            new_record['ImportDate'] = today_str
+        combined.append(new_record)
+
+    # Generate metadata only for today's records
+    metadata_today = generate_metadata(new_records, today_str)
+
+    save_json(main_json_path, combined)
+    save_json(meta_json_path, metadata_today)
+
+    print(f"✅ Updated JSON saved to:\n - {main_json_path}\n - {meta_json_path}")
+
+# Example usage:
+# main("PAM Dashboard Management - SA09.xml")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Suppose there are 20 files in the beginning. 
 The data is reflected into metadata table accordingly.
 Case 1:
