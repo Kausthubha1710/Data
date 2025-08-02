@@ -1,3 +1,112 @@
+import pandas as pd
+import os
+from pathlib import Path
+import xml.etree.ElementTree as ET
+
+filename = 'PAM Dashboard Management - SA09.xml'
+reportname = filename.split('-')[-1].split('.')[0].strip()
+
+main_table_name = f'PAM_cyberark_{reportname}.csv'
+meta_table_name = f'PAM_cyberark_{reportname}_metadata.csv'
+
+# Step 1: Create table if not exists
+if not Path(main_table_name).exists():
+    columns = ['Instance', 'Metier2', 'SafeName', 'BAM_ID', 'AppName', 'AppStatus',
+               'EntitlementOwnerUID', 'EntitlementOwnerName', 'EntitlementOwnerMetier',
+               'EntitlementOwnerSite', 'NbSafeUsers', 'NbSafeUsersWithOwnerRight',
+               'NbSafeUsersWithBreakglassRight', 'NbSafeUsersWithDEVRight',
+               'NbSafeUsersWithConsultRight', 'SafeCreationDate', 'LastUsed HumanDate',
+               'ImportDate', 'Assignee', 'Action', 'Remediation', 'Comments']
+    df = pd.DataFrame(columns=columns)
+    df.to_csv(main_table_name, index=False)
+
+# Step 2: Create metadata table if not exists
+if not Path(meta_table_name).exists():
+    meta_df = pd.DataFrame(columns=['SafeId', 'SafeName', 'present_on'])
+    meta_df.to_csv(meta_table_name, index=False)
+
+# Step 3: Parse XML and append rows (mock parsing shown)
+tree = ET.parse(filename)
+root = tree.getroot()
+
+# Dummy values
+row = {
+    'Instance': 'SampleInstance',
+    'Metier2': 'SampleMetier',
+    'SafeName': 'SafeA',
+    'BAM_ID': 1234,
+    'AppName': 'MyApp',
+    'AppStatus': 'Active',
+    'EntitlementOwnerUID': 'UID001',
+    'EntitlementOwnerName': 'John Doe',
+    'EntitlementOwnerMetier': 'IT',
+    'EntitlementOwnerSite': 'Paris',
+    'NbSafeUsers': 5,
+    'NbSafeUsersWithOwnerRight': 2,
+    'NbSafeUsersWithBreakglassRight': 1,
+    'NbSafeUsersWithDEVRight': 1,
+    'NbSafeUsersWithConsultRight': 1,
+    'SafeCreationDate': pd.Timestamp.now(),
+    'LastUsed HumanDate': pd.Timestamp.now(),
+    'ImportDate': pd.Timestamp.today().date(),
+    'Assignee': 'Jane',
+    'Action': 'Review',
+    'Remediation': 'None',
+    'Comments': 'Imported from XML'
+}
+
+# Append data to main table
+df = pd.read_csv(main_table_name)
+df = df.append(row, ignore_index=True)
+df.to_csv(main_table_name, index=False)
+
+# Append to metadata
+meta_df = pd.read_csv(meta_table_name)
+meta_df = meta_df.append({'SafeId': len(df), 'SafeName': 'SafeA', 'present_on': pd.Timestamp.today().date()}, ignore_index=True)
+meta_df.to_csv(meta_table_name, index=False)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 -- Assuming you have a temporary table or staging table `incoming_data`
 -- which contains today's received file data.
 
