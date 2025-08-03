@@ -1,3 +1,53 @@
+Insert/Update Procedure Summary
+The data management system involves two tables:
+
+PAM_Cyberarck_<reportname> – stores the latest state of each record
+
+PAM_Cyberarck_<reportname>_metadata – maintains a historical log of file arrivals
+
+1. Insert into Metadata Table
+Each time a new data file is processed, every record from that file is logged into the metadata table regardless of whether it already exists in the main table.
+This ensures a complete history of all data arrivals.
+
+Purpose: To track the presence of each SafeName on a particular date.
+
+Operation: A new row is inserted into the metadata table with:
+
+SafeId (linked to the main table)
+
+SafeName
+
+Current date as present_on
+
+2. Insert or Update into Main Table
+The main table stores the most recent version of each record (SafeName), ensuring up-to-date data.
+
+If the record (SafeName) does not exist:
+
+A new row is inserted with all relevant data fields.
+
+The ImportDate is set to the current date.
+
+If the record (SafeName) already exists:
+
+The existing row is updated with new values from the incoming data.
+
+The ImportDate is updated to reflect the most recent arrival date.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import os
 import xml.etree.ElementTree as ET
 import json
