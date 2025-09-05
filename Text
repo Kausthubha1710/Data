@@ -1,349 +1,59 @@
-Project layout
+1. Don’t update metadata, only insert
 
-auto-pipeline/
-│
-├─ main.py                         # your existing script (unchanged)
-├─ config.txt                      # your existing config, points to INCOMING_DIR
-│
-├─ settings.py                     # all paths & knobs live here
-├─ run_ingest.py                   # runs: python main.py --table main | metadata
-├─ watcher.py                      # watches downloads, moves XMLs, triggers ingest
-├─ utils.py                        # small helpers (logging, file-stable check, etc.)
-│
-├─ logs/
-│   └─ pipeline.log
-│
-├─ incoming_xml/                   # files that main.py reads (match config.txt path)
-├─ archive/                        # processed files go here
-└─ failed/                         # failed files go here
+Change metadata_updater.py:
 
-> 📌 Important: Make sure config.txt points to incoming_xml/ (the folder where the watcher will place XMLs). You don’t need to rewrite config.txt on every run — keep a stable folder and let the watcher keep it filled.
+class MetadataUpdater:
+    def update_metadata(self):
+        self.db_manager.ensure_table(self.table_name, self.metadata_data[0] if self.metadata_data else {})
+        # Always insert, never update
+        self.db_manager.insert_rows(self.table_name, self.metadata_data)
 
+2. Let Postgres handle id (auto-increment)
 
+In db_manager.ensure_table, make id a serial/identity column:
 
+def ensure_table(self, table_name: str, sample_row: dict):
+    qualified_name = sql.Identifier(self.schema, table_name)
+    column_defs = []
+    for col, val in sample_row.items():
+        if col == "id":
+            column_defs.append(sql.SQL('"id" SERIAL PRIMARY KEY'))
+            continue
+        pg_type = self._postgres_type(val)
+        column_defs.append(sql.SQL("{} {}").format(sql.Identifier(col), sql.SQL(pg_type)))
+    column_defs_sql = sql.SQL(", ").join(column_defs)
+    create_table_sql = sql.SQL("CREATE TABLE IF NOT EXISTS {} ({})").format(qualified_name, column_defs_sql)
+    with self.conn.cursor() as cur:
+        cur.execute(create_table_sql)
+        self.conn.commit()
 
----
+3. Don’t insert "id" values
 
-1) settings.py
+In db_manager.insert_rows:
 
-All your adjustable stuff in one place.
+def insert_rows(self, table_name: str, rows: list[dict]):
+    if not rows:
+        return
 
-# settings.py
-from pathlib import Path
-import sys
+    existing_columns = self._get_existing_columns(table_name)
 
-# --- Folders ---
-BASE_DIR      = Path(__file__).resolve().parent
-DOWNLOAD_DIR  = BASE_DIR / "downloads"       # where your manager downloads XMLs
-INCOMING_DIR  = BASE_DIR / "incoming_xml"    # MUST match the path used in config.txt
-ARCHIVE_DIR   = BASE_DIR / "archive"
-FAILED_DIR    = BASE_DIR / "failed"
-LOG_DIR       = BASE_DIR / "logs"
-LOG_FILE      = LOG_DIR / "pipeline.log"
+    # exclude id if it exists in the table (Postgres will auto-generate)
+    if "id" in existing_columns:
+        for r in rows:
+            r.pop("id", None)
 
-# --- Your existing script ---
-MAIN_SCRIPT   = BASE_DIR / "main.py"         # do not change
-PYTHON_BIN    = sys.executable               # or r"C:\Path\to\venv\Scripts\python.exe"
+    all_columns = set()
+    for r in rows:
+        all_columns.update(r.keys())
 
-# --- Commands to run (exactly what you do manually) ---
-COMMANDS = [
-    [PYTHON_BIN, str(MAIN_SCRIPT), "--table", "main"],
-    [PYTHON_BIN, str(MAIN_SCRIPT), "--table", "metadata"],
-]
+    column_order = sorted(list(set(existing_columns) & set(all_columns)))
+    values = [[row.get(col, None) for col in column_order] for row in rows]
 
-# --- Watcher behavior ---
-FILE_SETTLE_SECONDS = 3       # wait until file size stops changing
-DEBOUNCE_SECONDS    = 5       # collapse bursts into one ingest
-VALID_EXTENSIONS    = {".xml"}
+    qualified_name = sql.Identifier(self.schema, table_name)
+    cols = sql.SQL(",").join(map(sql.Identifier, column_order))
 
+    insert_sql = sql.SQL("INSERT INTO {} ({}) VALUES %s").format(qualified_name, cols)
 
----
-
-2) utils.py
-
-Lightweight helpers.
-
-# utils.py
-import time, logging
-from pathlib import Path
-
-def ensure_dirs(*dirs):
-    for d in dirs:
-        d.mkdir(parents=True, exist_ok=True)
-
-def setup_logger(log_file):
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[logging.FileHandler(log_file, encoding="utf-8"), logging.StreamHandler()]
-    )
-    return logging.getLogger("pipeline")
-
-def is_file_stable(path: Path, wait_seconds: int) -> bool:
-    """Return True if file size stops changing for wait_seconds."""
-    if not path.exists():
-        return False
-    last = path.stat().st_size
-    time.sleep(wait_seconds)
-    if not path.exists():
-        return False
-    return path.stat().st_size == last
-
-
----
-
-3) run_ingest.py
-
-Runs your two exact commands, with logging and error propagation.
-
-# run_ingest.py
-import subprocess
-from settings import COMMANDS
-from utils import setup_logger
-from settings import LOG_FILE
-
-log = setup_logger(LOG_FILE)
-
-def run_ingest():
-    for cmd in COMMANDS:
-        log.info("Running: %s", " ".join(map(str, cmd)))
-        subprocess.run(cmd, check=True)
-    log.info("✅ Ingest complete (main + metadata)")
-
-if __name__ == "__main__":
-    run_ingest()
-
-
----
-
-4) watcher.py
-
-Watches the download folder, moves XMLs into incoming_xml/, runs ingestion once per burst, then archives.
-
-# watcher.py
-import time, shutil, threading
-from pathlib import Path
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
-
-from settings import (
-    DOWNLOAD_DIR, INCOMING_DIR, ARCHIVE_DIR, FAILED_DIR,
-    LOG_FILE, FILE_SETTLE_SECONDS, DEBOUNCE_SECONDS, VALID_EXTENSIONS
-)
-from utils import ensure_dirs, setup_logger, is_file_stable
-from run_ingest import run_ingest
-
-log = setup_logger(LOG_FILE)
-
-# Debounce state
-_last_trigger_time = 0
-_trigger_lock = threading.Lock()
-_pending_files = set()
-
-def _trigger_ingest_debounced():
-    """Run ingest once after no new files for DEBOUNCE_SECONDS."""
-    global _last_trigger_time
-    while True:
-        time.sleep(1)
-        with _trigger_lock:
-            if _pending_files and (time.time() - _last_trigger_time) >= DEBOUNCE_SECONDS:
-                files = list(_pending_files)
-                _pending_files.clear()
-        if files:
-            try:
-                log.info("Starting ingestion for batch: %s", files)
-                run_ingest()
-                # Archive the batch only after success
-                for f in files:
-                    dst = ARCHIVE_DIR / f.name
-                    f.rename(dst)
-                    log.info("Archived: %s -> %s", f, dst)
-            except Exception as e:
-                log.exception("Ingest failed: %s", e)
-                # Move files to FAILED to avoid reprocessing loop
-                for f in files:
-                    dst = FAILED_DIR / f.name
-                    try:
-                        f.rename(dst)
-                        log.warning("Moved to FAILED: %s -> %s", f, dst)
-                    except Exception:
-                        log.exception("Failed to move to FAILED: %s", f)
-            finally:
-                files = []  # reset for next loop
-
-class XmlHandler(FileSystemEventHandler):
-    def on_created(self, event):
-        if event.is_directory:
-            return
-        src = Path(event.src_path)
-        if src.suffix.lower() not in VALID_EXTENSIONS:
-            return
-        log.info("New file detected: %s", src)
-
-        # Wait until fully written
-        if not is_file_stable(src, FILE_SETTLE_SECONDS):
-            # one more chance
-            if not is_file_stable(src, FILE_SETTLE_SECONDS):
-                log.warning("File never stabilized, skipping: %s", src)
-                return
-
-        # Move to INCOMING (where config.txt points)
-        dest = INCOMING_DIR / src.name
-        try:
-            shutil.move(str(src), str(dest))
-            log.info("Moved to INCOMING: %s -> %s", src, dest)
-        except Exception:
-            log.exception("Failed to move %s to INCOMING", src)
-            return
-
-        # Debounce & queue for ingestion
-        global _last_trigger_time
-        with _trigger_lock:
-            _pending_files.add(dest)
-            _last_trigger_time = time.time()
-
-def main():
-    ensure_dirs(DOWNLOAD_DIR, INCOMING_DIR, ARCHIVE_DIR, FAILED_DIR, LOG_FILE.parent)
-
-    # Background thread to debounce and trigger ingest
-    t = threading.Thread(target=_trigger_ingest_debounced, daemon=True)
-    t.start()
-
-    # Start watchdog
-    observer = Observer()
-    observer.schedule(XmlHandler(), str(DOWNLOAD_DIR), recursive=False)
-    observer.start()
-    log.info("👀 Watching for XML in: %s", DOWNLOAD_DIR)
-
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        observer.stop()
-    observer.join()
-
-if __name__ == "__main__":
-    main()
-
-
----
-
-Step-by-step setup
-
-1. Create folders
-
-
-
-Make the structure above (at least downloads/, incoming_xml/, archive/, failed/, logs/).
-
-
-2. Point config.txt to incoming_xml/
-
-
-
-In your existing config.txt, set the XML path to the incoming_xml/ folder you just created.
-
-Keep your file-name/attribute entries as they already are.
-
-
-3. Install dependencies
-
-
-
-pip install watchdog
-
-4. Run the watcher
-
-
-
-python watcher.py
-
-Now, when your manager drops XMLs into downloads/, the watcher:
-
-waits until each file is fully written,
-
-moves it to incoming_xml/ (the folder your config.txt references),
-
-runs your two commands:
-python main.py --table main and python main.py --table metadata,
-
-archives the successfully processed files,
-
-logs everything to logs/pipeline.log.
-
-
-
-5. Grafana
-
-
-
-Make sure Grafana’s datasource points to the same PostgreSQL.
-
-In each panel, set Refresh to 1s (⚠️ note this is heavy; 5s–10s is more typical).
-
-No other change is required — Grafana will show whatever your tables contain.
-
-
-
----
-
-Windows / Linux auto-start (pick one)
-
-Windows (Task Scheduler)
-
-Create a task “Auto XML Pipeline”.
-
-Trigger: At startup (and/or At log on).
-
-Action: python with Program/script: path to python, Arguments: watcher.py, Start in: the project folder.
-
-Set “Run whether user is logged on or not.”
-
-
-Linux (systemd) Create /etc/systemd/system/xml-watcher.service:
-
-[Unit]
-Description=XML Auto Pipeline Watcher
-After=network.target
-
-[Service]
-WorkingDirectory=/path/to/auto-pipeline
-ExecStart=/path/to/venv/bin/python watcher.py
-Restart=always
-User=youruser
-Environment=PYTHONUNBUFFERED=1
-
-[Install]
-WantedBy=multi-user.target
-
-Then:
-
-sudo systemctl daemon-reload
-sudo systemctl enable --now xml-watcher.service
-
-
----
-
-Why this flow works (and is safe)
-
-No edits to main.py or config.txt logic — you just stabilize the folder they point to.
-
-Idempotent batches: if ingestion fails, files go to failed/ (so you can inspect and re-drop them into downloads/ later).
-
-Debounce: if many files arrive together, we run the two commands once per burst, not N times.
-
-Archive: successful files move out of the way and are traceable.
-
-
-
----
-
-If you want, I can tweak watcher.py to:
-
-send a small email/Teams/Slack alert on failure,
-
-rename incoming files to a standard pattern before ingest,
-
-or validate filename/date rules before triggering the load.
-
-
+    with self.conn.cursor() as cur:
+        execute_values(cur, insert_sql, values, page_size=100)
+        self.conn.commit()
