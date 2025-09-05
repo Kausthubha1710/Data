@@ -1,3 +1,573 @@
+# config_loader.py
+import re
+import ast
+
+def load_config(config_file_path):
+    config = {}
+    collection_configs = {}
+    
+    with open(config_file_path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if line and '=' in line:
+                key, value = line.split('=', 1)  # Split only on first '='
+                key = key.strip()
+                value = value.strip()
+                
+                if key in ['xml_dir', 'output_dir']:
+                    config[key] = value
+                else:
+                    collection_configs[key] = parse_collection_config(value)
+    
+    return config, collection_configs
+
+def parse_collection_config(config_value):
+    """
+    Parse configuration values like:
+    [Details1_Collection], [metier], [CIB ITO IT Client Engagement & Protection IT], [id, ("SERVER_ID", "PAM_LOGINNAME")]
+    """
+    config_dict = {}
+    
+    # Split by comma and clean up brackets
+    parts = [part.strip() for part in config_value.split(',')]
+    
+    # Extract collections (first part)
+    if parts[0]:
+        collections_str = parts[0].replace('[', '').replace(']', '').strip()
+        config_dict['collections'] = [collections_str]
+    
+    # Extract attribute names (second part)
+    if len(parts) > 1 and parts[1]:
+        attr_str = parts[1].replace('[', '').replace(']', '').strip()
+        config_dict['attribute_names'] = [attr_str]
+    
+    # Extract attribute values (third part)
+    if len(parts) > 2 and parts[2]:
+        attr_values_str = parts[2].replace('[', '').replace(']', '').strip()
+        config_dict['attribute_values'] = [attr_values_str]
+    
+    # Extract metadata columns configuration (fourth part and beyond)
+    if len(parts) > 3:
+        metadata_config_str = ', '.join(parts[3:]).replace('[', '').replace(']', '').strip()
+        config_dict['metadata_columns'] = parse_metadata_columns(metadata_config_str)
+    else:
+        # Default to legacy SafeName behavior
+        config_dict['metadata_columns'] = {
+            'base_columns': ['id'],
+            'custom_columns': ['SafeName'],
+            'safe_id_source': ['SafeName']
+        }
+    
+    return config_dict
+
+def parse_metadata_columns(metadata_str):
+    """
+    Parse metadata column configuration like:
+    id, ("SERVER_ID", "PAM_LOGINNAME")
+    """
+    metadata_config = {
+        'base_columns': [],
+        'custom_columns': [],
+        'safe_id_source': []
+    }
+    
+    try:
+        # Use regex to find tuples and individual items
+        tuple_pattern = r'\([^)]+\)'
+        tuples = re.findall(tuple_pattern, metadata_str)
+        
+        # Remove tuples from string to get individual items
+        remaining_str = re.sub(tuple_pattern, '', metadata_str)
+        individual_items = [item.strip() for item in remaining_str.split(',') if item.strip()]
+        
+        # Process individual items (base columns)
+        for item in individual_items:
+            if item and item not in ['', '(', ')']:
+                metadata_config['base_columns'].append(item)
+        
+        # Process tuples (custom columns for SafeID calculation)
+        for tuple_str in tuples:
+            # Parse the tuple string
+            try:
+                # Clean up the tuple string and evaluate it
+                clean_tuple = tuple_str.replace('(', '').replace(')', '').replace('"', '').replace("'", '')
+                columns = [col.strip() for col in clean_tuple.split(',')]
+                metadata_config['custom_columns'].extend(columns)
+                metadata_config['safe_id_source'].extend(columns)
+            except:
+                print(f"Warning: Could not parse tuple {tuple_str}")
+        
+        # If no custom columns specified, default to SafeName
+        if not metadata_config['custom_columns']:
+            metadata_config['custom_columns'] = ['SafeName']
+            metadata_config['safe_id_source'] = ['SafeName']
+            
+    except Exception as e:
+        print(f"Error parsing metadata columns: {e}")
+        # Default fallback
+        metadata_config = {
+            'base_columns': ['id'],
+            'custom_columns': ['SafeName'],
+            'safe_id_source': ['SafeName']
+        }
+    
+    return metadata_config
+
+
+# xml_parser.py
+import os
+import xml.etree.ElementTree as ET
+import json
+from collections import OrderedDict
+from datetime import date
+
+class XmlParser:
+    def __init__(self, xml_file, collection_config):
+        self.xml_file = xml_file
+        self.collection_config = collection_config
+
+    def parse_xml_file(self):
+        try:
+            tree = ET.parse(self.xml_file)
+            root = tree.getroot()
+            namespace = root.tag.split('}')[0].strip('{')
+            ns_prefix = f'{{{namespace}}}' if namespace else ''
+            collection_element = root.find(f'.//{ns_prefix}{self.collection_config["collections"][0]}')
+            
+            if collection_element is None:
+                print(f"Collection not found: {self.collection_config['collections'][0]} in {self.xml_file}")
+                return None
+            
+            data = []
+            elements = collection_element.findall(f'{ns_prefix}*')
+            attribute_name = self.collection_config["attribute_names"][0]
+            attribute_values = self.collection_config["attribute_values"]
+            
+            for element in elements:
+                if attribute_name in element.attrib and element.attrib.get(attribute_name) in attribute_values:
+                    row = OrderedDict()
+                    row['id'] = len(data) + 1
+                    
+                    for attr in element.attrib:
+                        row[attr] = element.attrib.get(attr, '')
+                    
+                    row['ImportDate'] = date.today().strftime("%Y-%m-%d")
+                    row['Assignee'] = ''
+                    row['Action'] = ''
+                    row['Remediation'] = ''
+                    row['Comments'] = ''
+                    row['Status'] = ""
+                    data.append(row)
+            
+            return data
+        except Exception as e:
+            print(f"Error parsing {self.xml_file}: {e}")
+            return None
+
+    def parse_xml_file_metadata(self, output_dir, metadata_table_name, table_name):
+        try:
+            tree = ET.parse(self.xml_file)
+            root = tree.getroot()
+            namespace = root.tag.split('}')[0].strip('{')
+            ns_prefix = f'{{{namespace}}}' if namespace else ''
+            collection_element = root.find(f'.//{ns_prefix}{self.collection_config["collections"][0]}')
+            
+            if collection_element is None:
+                print(f"Collection not found: {self.collection_config['collections'][0]} in {self.xml_file}")
+                return None
+            
+            metadata_rows = []
+            today = date.today().strftime("%Y-%m-%d")
+            
+            # Get metadata column configuration
+            metadata_config = self.collection_config.get('metadata_columns', {
+                'base_columns': ['id'],
+                'custom_columns': ['SafeName'],
+                'safe_id_source': ['SafeName']
+            })
+            
+            # Get elements from XML
+            elements = collection_element.findall(f'{ns_prefix}*')
+            attribute_name = self.collection_config["attribute_names"][0]
+            attribute_values = self.collection_config["attribute_values"]
+            
+            # Track unique combinations to avoid duplicates
+            seen_combinations = set()
+            temp_id = 1
+            
+            for element in elements:
+                if attribute_name in element.attrib and element.attrib.get(attribute_name) in attribute_values:
+                    
+                    # Extract values for custom columns
+                    column_values = []
+                    for col_name in metadata_config['safe_id_source']:
+                        # Try different case variations to find the attribute
+                        value = self._find_attribute_value(element.attrib, col_name)
+                        column_values.append(value)
+                    
+                    # Create combination key for duplicate detection
+                    combination_key = tuple(column_values + [today])
+                    
+                    # Skip if we've already seen this combination today
+                    if combination_key in seen_combinations:
+                        continue
+                    seen_combinations.add(combination_key)
+                    
+                    # Create metadata row
+                    metadata_row = OrderedDict()
+                    
+                    # Add base columns
+                    for base_col in metadata_config['base_columns']:
+                        if base_col == 'id':
+                            metadata_row['id'] = temp_id
+                        else:
+                            metadata_row[base_col] = self._find_attribute_value(element.attrib, base_col)
+                    
+                    # Add custom columns
+                    for custom_col in metadata_config['custom_columns']:
+                        metadata_row[custom_col] = self._find_attribute_value(element.attrib, custom_col)
+                    
+                    # Calculate SafeID based on configured source columns
+                    metadata_row['SafeID'] = self._calculate_safe_id(temp_id, column_values, metadata_config)
+                    
+                    # Always add present_on
+                    metadata_row['present_on'] = today
+                    
+                    metadata_rows.append(metadata_row)
+                    temp_id += 1
+            
+            return metadata_rows
+            
+        except Exception as e:
+            print(f"Error parsing metadata from {self.xml_file}: {e}")
+            return None
+    
+    def _find_attribute_value(self, attributes, column_name):
+        """
+        Find attribute value with case-insensitive matching
+        """
+        # Direct match first
+        if column_name in attributes:
+            return attributes[column_name]
+        
+        # Case-insensitive search
+        for attr_name, attr_value in attributes.items():
+            if attr_name.lower() == column_name.lower():
+                return attr_value
+        
+        return ''  # Return empty string if not found
+    
+    def _calculate_safe_id(self, base_id, column_values, metadata_config):
+        """
+        Calculate SafeID based on configuration
+        """
+        if len(metadata_config['safe_id_source']) == 1:
+            # Single column - use simple approach
+            return f"{base_id}_{column_values[0]}" if column_values[0] else str(base_id)
+        else:
+            # Multiple columns - combine them
+            non_empty_values = [str(val) for val in column_values if val]
+            if non_empty_values:
+                combined = "_".join(non_empty_values)
+                return f"{base_id}_{combined}"
+            else:
+                return str(base_id)
+
+
+# metadata_updater.py
+from db_manager import DBManager
+from datetime import date
+
+class MetadataUpdater:
+    def __init__(self, metadata_data, db_manager, table_name):
+        self.metadata_data = metadata_data
+        self.db_manager = db_manager
+        self.table_name = table_name
+
+    def update_metadata(self):
+        if not self.metadata_data:
+            print(f"No metadata to update for table {self.table_name}")
+            return
+            
+        self.db_manager.ensure_table(self.table_name, self.metadata_data[0])
+        
+        # Get the maximum ID from the database to continue the sequence
+        existing_metadata = self.db_manager.load_metadata(self.table_name)
+        max_existing_id = max((row['id'] for row in existing_metadata), default=0)
+        
+        # Filter new metadata to only include today's date
+        today = date.today().strftime("%Y-%m-%d")
+        new_metadata_today = [row for row in self.metadata_data if row.get('present_on') == today]
+        
+        if not new_metadata_today:
+            print(f"No new metadata for today ({today}) in table {self.table_name}")
+            return
+        
+        # Assign unique IDs starting from max_existing_id + 1
+        for i, row in enumerate(new_metadata_today, start=1):
+            row['id'] = max_existing_id + i
+            # Recalculate SafeID with new ID if needed
+            if 'SafeID' in row:
+                safe_id_parts = row['SafeID'].split('_')
+                if safe_id_parts and safe_id_parts[0].isdigit():
+                    # Update the ID part of SafeID
+                    safe_id_parts[0] = str(row['id'])
+                    row['SafeID'] = '_'.join(safe_id_parts)
+        
+        # Remove duplicates based on SafeID and present_on (more flexible than SafeName)
+        seen_safe_ids_today = set()
+        unique_metadata_today = []
+        
+        for row in new_metadata_today:
+            safe_key = (row.get('SafeID', ''), row.get('present_on', ''))
+            if safe_key not in seen_safe_ids_today:
+                seen_safe_ids_today.add(safe_key)
+                unique_metadata_today.append(row)
+        
+        # Check if we already have entries for today's SafeIDs
+        existing_today = [row for row in existing_metadata if row.get('present_on') == today]
+        existing_safe_ids_today = set((row.get('SafeID', ''), row.get('present_on', '')) for row in existing_today)
+        
+        # Only insert SafeIDs that don't already exist for today
+        final_metadata = []
+        for row in unique_metadata_today:
+            safe_key = (row.get('SafeID', ''), row.get('present_on', ''))
+            if safe_key not in existing_safe_ids_today:
+                final_metadata.append(row)
+        
+        if final_metadata:
+            self.db_manager.insert_rows(self.table_name, final_metadata)
+            print(f"Inserted {len(final_metadata)} new metadata rows for {today} into {self.table_name}")
+        else:
+            print(f"No new unique metadata to insert for {today} in table {self.table_name}")
+
+
+# Example updated config.txt format:
+# xml_dir=/path/to/xml/files
+# output_dir=/path/to/output
+# INFORA02=[Details1_Collection], [metier], [CIB ITO IT Client Engagement & Protection IT], [id, ("SERVER_ID", "PAM_LOGINNAME")]
+# SA09=[Details2_Collection], [Metier2], [CIB ITO IT Client Engagement & Protection IT, CIB ITO IT CIB ITO CCCO], [id, ("SafeName")]
+
+
+# db_manager.py (minimal changes needed - mostly compatible)
+import json
+import os
+from configparser import ConfigParser
+from datetime import date
+import psycopg2
+from psycopg2 import sql
+from psycopg2.extras import execute_values, Json
+
+class DBManager:
+    def __init__(self, credentials_path="db_credentials.txt"):
+        self.creds = self.load_credentials(credentials_path)
+        self.conn = self.connect()
+        self.schema = self.creds.get("schema", "public")
+
+    def load_credentials(self, path):
+        creds = {}
+        with open(path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and '=' in line:
+                    key, value = line.split('=')
+                    creds[key.strip()] = value.strip()
+        return creds
+
+    def connect(self):
+        return psycopg2.connect(
+            host=self.creds["host"],
+            port=self.creds["port"],
+            dbname=self.creds["database"],
+            user=self.creds["user"],
+            password=self.creds["password"],
+        )
+
+    def ensure_table(self, table_name, sample_row):
+        qualified_name = sql.Identifier(self.schema, table_name)
+        column_defs = []
+        for col, val in sample_row.items():
+            pg_type = self.postgres_type(val)
+            column_defs.append(sql.SQL("{} {}").format(sql.Identifier(col), sql.SQL(pg_type)))
+        column_defs.append(sql.SQL('PRIMARY KEY ("id")'))
+        column_defs_sql = sql.SQL(", ").join(column_defs)
+        create_table_sql = sql.SQL("CREATE TABLE IF NOT EXISTS {} ({})").format(qualified_name, column_defs_sql)
+        with self.conn.cursor() as cur:
+            cur.execute(create_table_sql)
+            self.conn.commit()
+
+    def postgres_type(self, value):
+        if isinstance(value, bool):
+            return "BOOLEAN"
+        if isinstance(value, int):
+            return "INTEGER"
+        if isinstance(value, float):
+            return "DOUBLE PRECISION"
+        return "TEXT"
+
+    def insert_rows(self, table_name, rows):
+        if not rows:
+            return
+        existing_columns = self.get_existing_columns(table_name)
+        all_columns = set()
+        for r in rows:
+            all_columns.update(r.keys())
+        column_order = sorted(list(set(existing_columns) & set(all_columns)))
+        values = [[row.get(col, None) for col in column_order] for row in rows]
+        qualified_name = sql.Identifier(self.schema, table_name)
+        cols = sql.SQL(",").join(map(sql.Identifier, column_order))
+        update_assignments = sql.SQL(", ").join(sql.SQL('{}=EXCLUDED.{}').format(sql.Identifier(col), sql.Identifier(col)) for col in column_order if col != "id")
+        insert_sql = sql.SQL("INSERT INTO {} ({}) VALUES %s ON CONFLICT (id) DO UPDATE SET {}").format(qualified_name, cols, update_assignments)
+        with self.conn.cursor() as cur:
+            execute_values(cur, insert_sql, values, page_size=100)
+            self.conn.commit()
+
+    def get_existing_columns(self, table_name):
+        sql_query = """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = %s
+            AND table_name = %s;
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(sql_query, (self.schema, table_name))
+            return [row[0] for row in cur.fetchall()]
+
+    def delete_existing_data(self, table_name):
+        sql_query = sql.SQL("DELETE FROM {}.{}").format(sql.Identifier(self.schema), sql.Identifier(table_name))
+        with self.conn.cursor() as cur:
+            cur.execute(sql_query)
+            self.conn.commit()
+
+    def write_metadata(self, table_name, rows):
+        self.ensure_table(table_name, rows[0])
+        sql_query = sql.SQL("INSERT INTO {}.{} ({}) VALUES %s").format(sql.Identifier(self.schema), sql.Identifier(table_name), sql.SQL(",").join(map(sql.Identifier, rows[0].keys())))
+        values = [[row[col] for col in rows[0].keys()] for row in rows]
+        with self.conn.cursor() as cur:
+            execute_values(cur, sql_query, values, page_size=100)
+            self.conn.commit()
+
+    def load_metadata(self, table_name):
+        sql_query = sql.SQL("SELECT * FROM {}.{}").format(sql.Identifier(self.schema), sql.Identifier(table_name))
+        with self.conn.cursor() as cur:
+            cur.execute(sql_query)
+            rows = cur.fetchall()
+            columns = [desc[0] for desc in cur.description]
+            return [dict(zip(columns, row)) for row in rows]
+
+    def update_metadata(self, table_name, rows):
+        self.ensure_table(table_name, rows[0])
+        sql_query = sql.SQL("INSERT INTO {}.{} ({}) VALUES %s ON CONFLICT (id) DO UPDATE SET {}").format(
+            sql.Identifier(self.schema),
+            sql.Identifier(table_name),
+            sql.SQL(",").join(map(sql.Identifier, rows[0].keys())),
+            sql.SQL(", ").join(sql.SQL('{}=EXCLUDED.{}').format(sql.Identifier(col), sql.Identifier(col)) for col in rows[0].keys() if col != "id")
+        )
+        values = [[row[col] for col in rows[0].keys()] for row in rows]
+        with self.conn.cursor() as cur:
+            execute_values(cur, sql_query, values, page_size=100)
+            self.conn.commit()
+
+    def close(self):
+        self.conn.close()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 config_loader.py
 
 import ast
