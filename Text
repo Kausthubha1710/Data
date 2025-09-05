@@ -542,7 +542,52 @@ INFUNIX03=[Details], [Platform], [Unix Local]
 
 
 
+main.py
 
+import argparse
+from config_loader import load_config
+from table_processor import TableProcessor
+from db_manager import DBManager
+
+def main():
+    parser = argparse.ArgumentParser(description='Process XML files.')
+    parser.add_argument('--table', choices=['main', 'metadata'], required=True)
+    args = parser.parse_args()
+
+    config, collection_configs = load_config('config.txt')
+
+    xml_dir = config.get('xml_dir')
+    output_dir = config.get('output_dir')
+
+    if not xml_dir or not output_dir:
+        print("Missing xml_dir or output_dir in config.txt")
+        return
+
+    db_manager = DBManager()
+    table_processor = TableProcessor(xml_dir, output_dir, collection_configs, db_manager)
+
+    if args.table == 'main':
+        table_processor.process_main_table()
+    elif args.table == 'metadata':
+        table_processor.process_metadata_table()
+
+    db_manager.close()
+
+if __name__ == "__main__":
+    main()
+
+metadata_writer.py
+
+from db_manager import DBManager
+
+class MetadataWriter:
+    def __init__(self, metadata_data, db_manager, table_name):
+        self.metadata_data = metadata_data
+        self.db_manager = db_manager
+        self.table_name = table_name
+
+    def write_metadata(self):
+        self.db_manager.write_metadata(self.table_name, self.metadata_data)
 
 
 
