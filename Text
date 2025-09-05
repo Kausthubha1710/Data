@@ -1,193 +1,7 @@
-config_loader.py
-
-(no changes needed)
-
-import os
-import xml.etree.ElementTree as ET
-import json
-import argparse
-from collections import OrderedDict
-from datetime import date
-
-class ConfigLoader:
-    def __init__(self, config_file):
-        self.config_file = config_file
-
-    def load_config(self):
-        config = {}
-        collection_configs = {}
-        with open(self.config_file, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith('#'):
-                    continue
-                if '=' in line:
-                    key, value = line.split('=', 1)
-                    config[key.strip()] = value.strip()
-                elif ':' in line:
-                    key, value = line.split(':', 1)
-                    value = value.strip()
-                    try:
-                        parts = []
-                        temp_part = ''
-                        in_quotes = False
-                        for char in value:
-                            if char == '"':
-                                in_quotes = not in_quotes
-                            elif char == ',' and not in_quotes:
-                                parts.append(temp_part.strip())
-                                temp_part = ''
-                            else:
-                                temp_part += char
-                        parts.append(temp_part.strip())
-                        parts = [p.strip('[]') for p in parts]
-                        if len(parts) < 3:
-                            print(f"Warning: Insufficient parameters for {key}")
-                            continue
-                        collection_name = parts[0].strip()
-                        attribute_name = parts[1].strip()
-                        attribute_values = []
-                        for part in parts[2:]:
-                            attribute_values.extend([p.strip('"') for p in part.split(',')])
-                        collection_configs[key.strip()] = {
-                            "collections": [collection_name],
-                            "attribute_names": [attribute_name],
-                            "attribute_values": attribute_values
-                        }
-                    except Exception as e:
-                        print(f"Error parsing line: {line} - {e}")
-        return config, collection_configs
-
-🔹 db_manager.py
-
-(updated: id SERIAL PRIMARY KEY, ignore "id" in inserts, handle dates)
-
-import json
-import os
-from configparser import ConfigParser
-from datetime import date, datetime
-import psycopg2
-from psycopg2 import sql
-from psycopg2.extras import execute_values
-
-class DBManager:
-    def __init__(self, credentials_path: str = "db_credentials.txt"):
-        self.creds = self.load_credentials(credentials_path)
-        self.conn = self.connect()
-        self.schema = self.creds.get("schema", "public")
-
-    def load_credentials(self, path: str) -> dict:
-        creds = {}
-        with open(path, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line and '=' in line:
-                    key, value = line.split('=')
-                    creds[key.strip()] = value.strip()
-        return creds
-
-    def connect(self):
-        return psycopg2.connect(
-            host=self.creds["host"],
-            port=self.creds["port"],
-            dbname=self.creds["database"],
-            user=self.creds["user"],
-            password=self.creds["password"],
-        )
-
-    def ensure_table(self, table_name: str, sample_row: dict):
-        qualified_name = sql.Identifier(self.schema, table_name)
-        column_defs = []
-        for col, val in sample_row.items():
-            if col == "id":
-                column_defs.append(sql.SQL('"id" SERIAL PRIMARY KEY'))
-                continue
-            pg_type = self._postgres_type(val)
-            column_defs.append(
-                sql.SQL("{} {}").format(sql.Identifier(col), sql.SQL(pg_type))
-            )
-        column_defs_sql = sql.SQL(", ").join(column_defs)
-        create_table_sql = sql.SQL(
-            "CREATE TABLE IF NOT EXISTS {} ({})"
-        ).format(qualified_name, column_defs_sql)
-        with self.conn.cursor() as cur:
-            cur.execute(create_table_sql)
-            self.conn.commit()
-        existing_columns = self._get_existing_columns(table_name)
-        missing = set(sample_row.keys()) - set(existing_columns)
-        if missing:
-            alter_stmts = []
-            for col in missing:
-                if col == "id":
-                    continue
-                col_type = self._postgres_type(sample_row[col])
-                stmt = sql.SQL(
-                    "ALTER TABLE {} ADD COLUMN {} {}"
-                ).format(qualified_name, sql.Identifier(col), sql.SQL(col_type))
-                alter_stmts.append(stmt)
-            with self.conn.cursor() as cur:
-                for stmt in alter_stmts:
-                    cur.execute(stmt)
-                self.conn.commit()
-
-    def _get_existing_columns(self, table_name: str):
-        sql_query = """
-            SELECT column_name FROM information_schema.columns 
-            WHERE table_schema = %s AND table_name = %s;
-        """
-        with self.conn.cursor() as cur:
-            cur.execute(sql_query, (self.schema, table_name))
-            return [row[0] for row in cur.fetchall()]
-
-    def _postgres_type(self, value):
-        if isinstance(value, bool):
-            return "BOOLEAN"
-        if isinstance(value, int):
-            return "INTEGER"
-        if isinstance(value, float):
-            return "DOUBLE PRECISION"
-        if isinstance(value, (date, datetime)):
-            return "DATE"
-        return "TEXT"
-
-    def insert_rows(self, table_name: str, rows: list[dict]):
-        if not rows:
-            return
-        existing_columns = self._get_existing_columns(table_name)
-
-        # Remove id if SERIAL
-        if "id" in existing_columns:
-            for r in rows:
-                r.pop("id", None)
-
-        all_columns = set()
-        for r in rows:
-            all_columns.update(r.keys())
-
-        column_order = sorted(list(set(existing_columns) & set(all_columns)))
-        values = [[row.get(col, None) for col in column_order] for row in rows]
-        qualified_name = sql.Identifier(self.schema, table_name)
-        cols = sql.SQL(",").join(map(sql.Identifier, column_order))
-        insert_sql = sql.SQL("INSERT INTO {} ({}) VALUES %s").format(qualified_name, cols)
-        with self.conn.cursor() as cur:
-            execute_values(cur, insert_sql, values, page_size=100)
-            self.conn.commit()
-
-    def delete_existing_data(self, table_name: str):
-        qualified_name = sql.Identifier(self.schema, table_name)
-        delete_sql = sql.SQL("DELETE FROM {}").format(qualified_name)
-        with self.conn.cursor() as cur:
-            cur.execute(delete_sql)
-            self.conn.commit()
-
-    def close(self):
-        self.conn.close()
-
-🔹 metadata_updater.py
-
-(updated: always insert, no updates)
+metadata_updator.py
 
 from db_manager import DBManager
+from datetime import date
 
 class MetadataUpdater:
     def __init__(self, metadata_data, db_manager, table_name):
@@ -196,29 +10,57 @@ class MetadataUpdater:
         self.table_name = table_name
 
     def update_metadata(self):
-        self.db_manager.ensure_table(self.table_name, self.metadata_data[0] if self.metadata_data else {})
-        # Always append
-        self.db_manager.insert_rows(self.table_name, self.metadata_data)
+        if not self.metadata_data:
+            print(f"No metadata to update for table {self.table_name}")
+            return
+            
+        self.db_manager.ensure_table(self.table_name, self.metadata_data[0])
+        
+        # Get the maximum ID from the database to continue the sequence
+        existing_metadata = self.db_manager.load_metadata(self.table_name)
+        max_existing_id = max((row['id'] for row in existing_metadata), default=0)
+        
+        # Filter new metadata to only include today's date
+        today = date.today().strftime("%Y-%m-%d")
+        new_metadata_today = [row for row in self.metadata_data if row.get('present_on') == today]
+        
+        if not new_metadata_today:
+            print(f"No new metadata for today ({today}) in table {self.table_name}")
+            return
+        
+        # Assign unique IDs starting from max_existing_id + 1
+        for i, row in enumerate(new_metadata_today, start=1):
+            row['id'] = max_existing_id + i
+        
+        # Remove duplicates based on SafeName and present_on
+        seen_safes_today = set()
+        unique_metadata_today = []
+        
+        for row in new_metadata_today:
+            safe_key = (row.get('SafeName', ''), row.get('present_on', ''))
+            if safe_key not in seen_safes_today:
+                seen_safes_today.add(safe_key)
+                unique_metadata_today.append(row)
+        
+        # Check if we already have entries for today's safes
+        existing_today = [row for row in existing_metadata if row.get('present_on') == today]
+        existing_safes_today = set((row.get('SafeName', ''), row.get('present_on', '')) for row in existing_today)
+        
+        # Only insert safes that don't already exist for today
+        final_metadata = []
+        for row in unique_metadata_today:
+            safe_key = (row.get('SafeName', ''), row.get('present_on', ''))
+            if safe_key not in existing_safes_today:
+                final_metadata.append(row)
+        
+        if final_metadata:
+            self.db_manager.insert_rows(self.table_name, final_metadata)
+            print(f"Inserted {len(final_metadata)} new metadata rows for {today} into {self.table_name}")
+        else:
+            print(f"No new unique metadata to insert for {today} in table {self.table_name}")
 
-🔹 metadata_writer.py
 
-(no changes needed)
-
-from db_manager import DBManager
-
-class MetadataWriter:
-    def __init__(self, metadata_data, db_manager, table_name):
-        self.metadata_data = metadata_data
-        self.db_manager = db_manager
-        self.table_name = table_name
-
-    def write_metadata(self):
-        self.db_manager.ensure_table(self.table_name, self.metadata_data[0] if self.metadata_data else {})
-        self.db_manager.insert_rows(self.table_name, self.metadata_data)
-
-🔹 xml_parser.py
-
-(updated: don’t assign id)
+xml_parser.py
 
 import os
 import xml.etree.ElementTree as ET
@@ -248,7 +90,7 @@ class XmlParser:
             for element in elements:
                 if attribute_name in element.attrib and element.attrib.get(attribute_name) in attribute_values:
                     row = OrderedDict()
-                    # no id assignment here, Postgres generates it
+                    row['id'] = len(data) + 1
                     for attr in element.attrib:
                         row[attr] = element.attrib.get(attr, '')
                     row['ImportDate'] = date.today().strftime("%Y-%m-%d")
@@ -273,26 +115,42 @@ class XmlParser:
             if collection_element is None:
                 print(f"Collection not found: {self.collection_config['collections'][0]} in {self.xml_file}")
                 return None
+            
+            metadata_rows = []
+            today = date.today().strftime("%Y-%m-%d")
+            
+            # Get elements from XML
             elements = collection_element.findall(f'{ns_prefix}*')
             attribute_name = self.collection_config["attribute_names"][0]
             attribute_values = self.collection_config["attribute_values"]
-            metadata_rows = []
+            
+            # Track unique safes for today to avoid duplicates
+            seen_safes = set()
+            temp_safe_id = 1
+            
             for element in elements:
                 if attribute_name in element.attrib and element.attrib.get(attribute_name) in attribute_values:
-                    metadata_row = OrderedDict()
+                    # Extract SafeName from element attributes
                     safe_name = next((element.attrib.get(k, '') for k in element.attrib if k.lower() == 'safename'), '')
+                    
+                    # Skip if we've already seen this safe today
+                    if safe_name in seen_safes:
+                        continue
+                    seen_safes.add(safe_name)
+                    
+                    metadata_row = OrderedDict()
+                    # Don't assign ID here - let MetadataUpdater handle it
+                    metadata_row['id'] = temp_safe_id  # Temporary ID, will be reassigned
+                    metadata_row['SafeId'] = temp_safe_id  # Simple incremental SafeId for new safes
                     metadata_row['SafeName'] = safe_name
-                    metadata_row['present_on'] = date.today().strftime("%Y-%m-%d")
+                    metadata_row['present_on'] = today
                     metadata_rows.append(metadata_row)
+                    temp_safe_id += 1
+            
             return metadata_rows
+            
         except Exception as e:
             print(f"Error parsing metadata from {self.xml_file}: {e}")
             return None
 
-🔹 table_processor.py
 
-(no logic change, just works with new DBManager & XmlParser)
-
-🔹 main.py
-
-(no change)
