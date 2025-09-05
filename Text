@@ -1,119 +1,92 @@
-import os
-import xml.etree.ElementTree as ET
-import json
-from collections import OrderedDict
-from datetime import date
+import ast
 
-class XmlParser:
-    def __init__(self, xml_file, collection_config):
-        self.xml_file = xml_file
-        self.collection_config = collection_config
-
-    def parse_xml_file(self):
-        try:
-            tree = ET.parse(self.xml_file)
-            root = tree.getroot()
-            namespace = root.tag.split('}')[0].strip('{')
-            ns_prefix = f'{{{namespace}}}' if namespace else ''
-            collection_element = root.find(f'.//{ns_prefix}{self.collection_config["collections"][0]}')
-            if collection_element is None:
-                print(f"Collection not found: {self.collection_config['collections'][0]} in {self.xml_file}")
-                return None
-            data = []
-            elements = collection_element.findall(f'{ns_prefix}*')
-            attribute_name = self.collection_config["attribute_names"][0]
-            attribute_values = self.collection_config["attribute_values"]
-            for element in elements:
-                if attribute_name in element.attrib and element.attrib.get(attribute_name) in attribute_values:
-                    row = OrderedDict()
-                    row['id'] = len(data) + 1
-                    for attr in element.attrib:
-                        row[attr] = element.attrib.get(attr, '')
-                    row['ImportDate'] = date.today().strftime("%Y-%m-%d")
-                    row['Assignee'] = ''
-                    row['Action'] = ''
-                    row['Remediation'] = ''
-                    row['Comments'] = ''
-                    row['Status'] = ""
-                    data.append(row)
-            return data
-        except Exception as e:
-            print(f"Error parsing {self.xml_file}: {e}")
-            return None
-
-    def parse_xml_file_metadata(self, output_dir, metadata_table_name, table_name):
-        try:
-            tree = ET.parse(self.xml_file)
-            root = tree.getroot()
-            namespace = root.tag.split('}')[0].strip('{')
-            ns_prefix = f'{{{namespace}}}' if namespace else ''
-            collection_element = root.find(f'.//{ns_prefix}{self.collection_config["collections"][0]}')
-            if collection_element is None:
-                print(f"Collection not found: {self.collection_config['collections'][0]} in {self.xml_file}")
-                return None
-            
-            metadata_rows = []
-            today = date.today().strftime("%Y-%m-%d")
-            
-            # Get custom column names from config
-            metadata_columns = self.collection_config.get('metadata_columns', ['SafeName'])
-            print(f"Using metadata columns: {metadata_columns}")
-            
-            # Get elements from XML
-            elements = collection_element.findall(f'{ns_prefix}*')
-            attribute_name = self.collection_config["attribute_names"][0]
-            attribute_values = self.collection_config["attribute_values"]
-            
-            # Track unique combinations to avoid duplicates
-            seen_combinations = set()
-            temp_safe_id = 1
-            
-            for element in elements:
-                if attribute_name in element.attrib and element.attrib.get(attribute_name) in attribute_values:
-                    # Extract values for the specified metadata columns
-                    column_values = []
-                    for col_name in metadata_columns:
-                        # Look for the column in element attributes (case-insensitive)
-                        col_value = None
-                        for attr_key in element.attrib:
-                            if attr_key.lower() == col_name.lower():
-                                col_value = element.attrib.get(attr_key, '')
-                                break
-                        if col_value is None:
-                            col_value = element.attrib.get(col_name, '')  # Fallback to exact match
-                        column_values.append(col_value)
+def load_config(config_file_path):
+    config = {}
+    collection_configs = {}
+    with open(config_file_path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if line and '=' in line:
+                key, value = line.split('=', 1)  # Split only on first '=' to handle complex values
+                key = key.strip()
+                value = value.strip()
+                if key in ['xml_dir', 'output_dir']:
+                    config[key] = value
+                else:
+                    collection_configs[key] = {}
+                    parts = [part.strip() for part in value.split(',')]
                     
-                    # Create a unique key from the column values
-                    combination_key = tuple(column_values)
+                    # Parse collections
+                    collection_configs[key]['collections'] = [parts[0].strip().replace('[', '').replace(']', '')]
                     
-                    # Skip if we've already seen this combination today
-                    if combination_key in seen_combinations:
-                        continue
-                    seen_combinations.add(combination_key)
+                    # Parse attribute_names
+                    collection_configs[key]['attribute_names'] = [parts[1].strip().replace('[', '').replace(']', '')]
                     
-                    metadata_row = OrderedDict()
-                    # Don't assign final ID here - let MetadataUpdater handle it
-                    metadata_row['id'] = temp_safe_id  # Temporary ID, will be reassigned
+                    # Parse attribute_values and metadata_columns
+                    attribute_values = []
+                    metadata_columns = None
                     
-                    # Add the custom columns
-                    for i, col_name in enumerate(metadata_columns):
-                        metadata_row[col_name] = column_values[i]
+                    # Find where metadata column specification starts (contains '[id,')
+                    metadata_start_index = None
+                    for i, part in enumerate(parts):
+                        if '[id,' in part:
+                            metadata_start_index = i
+                            break
                     
-                    # Calculate SafeID based on the combination of metadata columns
-                    # For now, use a simple incremental SafeId - this can be enhanced later
-                    metadata_row['SafeId'] = temp_safe_id
-                    metadata_row['present_on'] = today
-                    metadata_rows.append(metadata_row)
-                    temp_safe_id += 1
+                    if metadata_start_index is not None:
+                        # Everything before metadata_start_index is attribute values (except first 2 parts)
+                        attribute_parts = parts[2:metadata_start_index]
+                        metadata_part = ' '.join(parts[metadata_start_index:])  # Join all metadata parts
+                        metadata_columns = parse_metadata_columns(metadata_part)
+                    else:
+                        # No metadata specification, all remaining parts are attribute values
+                        attribute_parts = parts[2:]
+                        metadata_columns = ['SafeName']  # Default
+                    
+                    # Parse attribute values - handle comma-separated values within parts
+                    for part in attribute_parts:
+                        # Remove any brackets first
+                        clean_part = part.strip().replace('[', '').replace(']', '')
+                        # Split by comma and add each value
+                        values = [v.strip() for v in clean_part.split(',') if v.strip()]
+                        attribute_values.extend(values)
+                    
+                    collection_configs[key]['attribute_values'] = attribute_values
+                    collection_configs[key]['metadata_columns'] = metadata_columns or ['SafeName']  # Default
+                    
+    return config, collection_configs
+
+def parse_metadata_columns(metadata_part):
+    """
+    Parse metadata column specification from config.
+    Examples:
+    - [id, ("SERVER_ID", "PAM_LOGINNAME")] -> ['SERVER_ID', 'PAM_LOGINNAME']
+    - [id, (SafeName)] -> ['SafeName']
+    """
+    try:
+        # Remove outer brackets and split by comma
+        clean_part = metadata_part.strip().replace('[', '').replace(']', '')
+        
+        # Find the tuple part
+        if '(' in clean_part and ')' in clean_part:
+            # Extract content between parentheses
+            start = clean_part.find('(') + 1
+            end = clean_part.find(')')
+            tuple_content = clean_part[start:end]
             
-            return metadata_rows
-            
-        except Exception as e:
-            print(f"Error parsing metadata from {self.xml_file}: {e}")
-            return None
-
-
-
+            # Split by comma and clean up
+            columns = [col.strip().strip('"').strip("'") for col in tuple_content.split(',')]
+            return [col for col in columns if col]  # Remove empty strings
+        else:
+            # No tuple format, look for column names after 'id,'
+            parts = [p.strip() for p in clean_part.split(',')]
+            if len(parts) > 1:
+                return [parts[1]]  # Return the part after 'id,'
+    except Exception as e:
+        print(f"Warning: Could not parse metadata columns from '{metadata_part}': {e}")
+        return ['SafeName']  # Default fallback
+    
+    return ['SafeName']  # Default fallback
 
 
 
