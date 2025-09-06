@@ -1,6 +1,4 @@
 # config_loader.py
-import ast
-
 def load_config(config_file_path):
     config = {}
     collection_configs = {}
@@ -8,78 +6,21 @@ def load_config(config_file_path):
         for line in f:
             line = line.strip()
             if line and '=' in line:
-                key, value = line.split('=', 1)
+                key, value = line.split('=')
                 key = key.strip()
                 value = value.strip()
                 if key in ['xml_dir', 'output_dir']:
                     config[key] = value
                 else:
                     collection_configs[key] = {}
-                    parts = [part.strip() for part in value.split(',')]
-                    
-                    # Parse collections (first part)
-                    if len(parts) > 0:
-                        collection_configs[key]['collections'] = parts[0].strip().replace('[', '').replace(']', '')
-                    
-                    # Parse attribute names (second part)
-                    if len(parts) > 1:
-                        collection_configs[key]['attribute_names'] = parts[1].strip().replace('[', '').replace(']', '')
-                    
-                    # Parse attribute_values and metadata columns
+                    parts = value.split(',')
+                    collection_configs[key]['collections'] = [parts[0].strip().replace('[', '').replace(']', '')]
+                    collection_configs[key]['attribute_names'] = [parts[1].strip().replace('[', '').replace(']', '')]
                     attribute_values = []
-                    metadata_columns = None
-                    metadata_start_index = None
-                    
-                    for i, part in enumerate(parts):
-                        if 'id,' in part:
-                            metadata_start_index = i
-                            break
-                    
-                    if metadata_start_index is not None:
-                        # Everything before metadata_start_index is attribute values (except first 2 parts)
-                        attribute_parts = parts[2:metadata_start_index]
-                        metadata_part = ','.join(parts[metadata_start_index:])
-                        metadata_columns = parse_metadata_columns(metadata_part)
-                    else:
-                        # No metadata specification, all remaining parts are attribute values
-                        attribute_parts = parts[2:] if len(parts) > 2 else []
-                        metadata_columns = ['SafeName']
-                    
-                    # Parse attribute values
-                    for part in attribute_parts:
-                        clean_part = part.strip().replace('[', '').replace(']', '')
-                        values = [v.strip() for v in clean_part.split(',') if v.strip()]
-                        attribute_values.extend(values)
-                    
+                    for part in parts[2:]:
+                        attribute_values.extend([p.strip() for p in part.split(',')])
                     collection_configs[key]['attribute_values'] = attribute_values
-                    collection_configs[key]['metadata_columns'] = metadata_columns or ['SafeName']
-    
     return config, collection_configs
-
-def parse_metadata_columns(metadata_part):
-    """
-    Parse metadata column specification from config.
-    Examples:
-    [id, ("SERVER_ID", "PAM_LOGINNAME")] -> ['SERVER_ID', 'PAM_LOGINNAME']
-    [id, (SafeName)] -> ['SafeName']
-    """
-    try:
-        clean_part = metadata_part.strip().replace('[', '').replace(']', '')
-        if '(' in clean_part and ')' in clean_part:
-            start = clean_part.find('(') + 1
-            end = clean_part.find(')')
-            tuple_content = clean_part[start:end]
-            columns = [col.strip().strip('"').strip("'") for col in tuple_content.split(',')]
-            return [col for col in columns if col]
-        else:
-            parts = [p.strip() for p in clean_part.split(',')]
-            if len(parts) > 1:
-                return parts[1:]  # Skip 'id' part
-    except Exception as e:
-        print(f"Warning: Could not parse metadata columns from '{metadata_part}': {e}")
-        return ['SafeName']
-    return ['SafeName']
-
 
 # xml_parser.py
 import os
