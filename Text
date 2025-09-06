@@ -4,103 +4,144 @@ import json
 from collections import OrderedDict
 from datetime import date
 
+
 class XmlParser:
     def __init__(self, xml_file, collection_config):
-        self.collection_config = collection_config
         self.xml_file = xml_file
-    
+        self.collection_config = collection_config
+
     def parse_xml_file(self):
         try:
             tree = ET.parse(self.xml_file)
             root = tree.getroot()
+
             namespace = root.tag.split('}')[0].strip('{')
             ns_prefix = f'{{{namespace}}}' if namespace else ''
-            
-            collection_element = root.find(f'.//{ns_prefix}{self.collection_config["collections"][0]}')
+
+            collection_element = root.find(
+                f'.//{ns_prefix}{self.collection_config["collections"][0]}'
+            )
             if collection_element is None:
                 print(f"Collection not found: {self.collection_config['collections'][0]} in {self.xml_file}")
                 return None
-            
+
             data = []
             elements = collection_element.findall(f'{ns_prefix}{self.collection_config["collections"][0]}')
             attribute_name = self.collection_config["attribute_names"][0]
             attribute_values = self.collection_config["attribute_values"]
-            
+
             for element in elements:
                 if attribute_name in element.attrib and element.attrib.get(attribute_name) in attribute_values:
                     row = OrderedDict()
                     row['id'] = len(data) + 1
-                    
+
                     for attr in element.attrib:
                         row[attr] = element.attrib.get(attr, '')
-                    
+
                     row['ImportDate'] = date.today().strftime("%Y-%m-%d")
                     row['Assignee'] = ''
                     row['Action'] = ''
                     row['Remediation'] = ''
                     row['Comments'] = ''
-                    row['Status'] = ''
+                    row['Status'] = ""
+
                     data.append(row)
-            
+
             return data
-            
+
         except Exception as e:
             print(f"Error parsing {self.xml_file}: {e}")
             return None
-    
+
     def parse_xml_file_metadata(self, output_dir, metadata_table_name, table_name):
         try:
             tree = ET.parse(self.xml_file)
             root = tree.getroot()
+
             namespace = root.tag.split('}')[0].strip('{')
             ns_prefix = f'{{{namespace}}}' if namespace else ''
-            
-            collection_element = root.find(f'.//{ns_prefix}{self.collection_config["collections"][0]}')
+
+            collection_element = root.find(
+                f'.//{ns_prefix}{self.collection_config["collections"][0]}'
+            )
             if collection_element is None:
                 print(f"Collection not found: {self.collection_config['collections'][0]} in {self.xml_file}")
                 return None
-            
-            metadata_rows = []
-            today = date.today().strftime("%Y-%m-%d")
-            metadata_columns = self.collection_config.get('metadata_columns', ['SafeName'])
-            print(f"Using metadata columns: {metadata_columns}")
-            
-            elements = collection_element.findall(f'{ns_prefix}*')
+
+            elements = collection_element.findall(f'{ns_prefix}{self.collection_config["collections"][0]}')
             attribute_name = self.collection_config["attribute_names"][0]
             attribute_values = self.collection_config["attribute_values"]
-            
-            # Use set to track unique SafeName values only
-            seen_safe_names = set()
-            safe_id = 1
-            
+
+            metadata_data = []
+
+            # Load main table (data)
+            json_file_path = os.path.join(output_dir, f'{table_name}.json')
+            try:
+                with open(json_file_path, 'r', encoding='utf-8') as f:
+                    main_data = json.load(f)
+            except FileNotFoundError:
+                main_data = []
+
+            # Load existing metadata
+            metadata_json_file_path = os.path.join(output_dir, f'{metadata_table_name}.json')
+            try:
+                with open(metadata_json_file_path, 'r', encoding='utf-8') as f:
+                    existing_metadata = json.load(f)
+
+                # Drop today's records
+                current_date = date.today().strftime("%Y-%m-%d")
+                existing_metadata = [item for item in existing_metadata if item['present_on'] != current_date]
+
+                # Continue ID sequence
+                last_id = max(item['id'] for item in existing_metadata) if existing_metadata else 0
+            except FileNotFoundError:
+                existing_metadata = []
+                last_id = 0
+
+            # Safe ID map (SafeName → SafeId)
+            safe_id_map = {}
+            next_safe_id = 1
+
+            # Populate map from main_data
+            for row in main_data:
+                key = (row['id'], row.get('SafeName', '').lower())
+                if key not in safe_id_map:
+                    safe_id_map[key] = row['id']
+
+            # Parse XML elements
             for element in elements:
                 if attribute_name in element.attrib and element.attrib.get(attribute_name) in attribute_values:
-                    # Extract the safe name from the element attributes
+                    metadata_row = OrderedDict()
+
+                    # Extract SafeName
                     safe_name = next((element.attrib.get(k, '') for k in element.attrib if k.lower() == 'safename'), '')
-                    
-                    # Check if this SafeName hasn't been seen before
-                    if safe_name.lower() not in seen_safe_names:
-                        # Add the SafeName to seen set
-                        seen_safe_names.add(safe_name.lower())
-                        
-                        # Create a metadata row
-                        metadata_row = OrderedDict()
-                        metadata_row['id'] = safe_id
-                        metadata_row['SafeName'] = safe_name
-                        metadata_row['SafeId'] = safe_id
-                        metadata_row['present_on'] = today
-                        
-                        # Add the metadata row to the metadata rows list
-                        metadata_rows.append(metadata_row)
-                        
-                        # Increment the safe id
-                        safe_id += 1
-            
-            return metadata_rows
-            
+
+                    # Increment ID
+                    metadata_row['id'] = last_id + 1
+
+                    # Map SafeName → SafeId
+                    key = (metadata_row['id'], safe_name.lower())
+                    if safe_name not in [k[1] for k in safe_id_map.keys()]:
+                        safe_id_map[(metadata_row['id'], safe_name.lower())] = next_safe_id
+                        next_safe_id += 1
+                    else:
+                        for k, v in safe_id_map.items():
+                            if k[1] == safe_name.lower():
+                                safe_id_map[(metadata_row['id'], safe_name.lower())] = v
+
+                    metadata_row['SafeId'] = safe_id_map[(metadata_row['id'], safe_name.lower())]
+                    metadata_row['SafeName'] = safe_name
+                    metadata_row['present_on'] = date.today().strftime("%Y-%m-%d")
+
+                    metadata_data.append(metadata_row)
+                    last_id += 1
+
+            return metadata_data
+
         except Exception as e:
             print(f"Error parsing metadata from {self.xml_file}: {e}")
             return None
+
 
 
 
