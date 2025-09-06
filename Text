@@ -1,58 +1,182 @@
-def parse_xml_file_metadata(self, output_dir, metadata_table_name, table_name):
-    try:
-        tree = ET.parse(self.xml_file)
-        root = tree.getroot()
-        namespace = root.tag.split('}').strip('{')
-        ns_prefix = f'{{{namespace}}}' if namespace else ""
-        collection_element = root.find(f'.//{ns_prefix}{self.collection_config["collections"]}')
-        if collection_element is None:
-            print(f"Collection not found: {self.collection_config['collections']} in {self.xml_file}")
-            return None
-        
-        metadata_rows = []
-        today = date.today().strftime("%Y-%m-%d")
-        metadata_columns = self.collection_config.get('metadata_columns', ['SafeName'])
-        attribute_name = self.collection_config["attribute_names"]
-        attribute_values = self.collection_config["attribute_values"]
-        
-        # Initialize mapping and counters
-        safe_id_map = {}
-        next_safe_id = 1
-        
-        elements = collection_element.findall(f'{ns_prefix}')
-        last_id = 0
-        
-        for element in elements:
-            if attribute_name in element.attrib and element.attrib.get(attribute_name) in attribute_values:
-                metadata_row = OrderedDict()
-                # Extract safe name case-insensitively
-                safe_name = next((element.attrib.get(k, '') for k in element.attrib if k.lower() == 'safename'), '')
+from collections import OrderedDict
+from datetime import date
+
+def process_metadata_entries(elements, attribute_name, attribute_values, metadata_columns):
+    """
+    Process XML elements to create metadata entries based on your codebase logic.
+    
+    Args:
+        elements: List of XML elements to process
+        attribute_name: The attribute name to check (e.g., 'type')
+        attribute_values: List of valid attribute values to match
+        metadata_columns: List of column names to extract (e.g., ['SafeName'])
+    
+    Returns:
+        List of metadata rows (OrderedDict objects)
+    """
+    metadata_data = []
+    today = date.today().strftime("%Y-%m-%d")
+    seen_combinations = set()
+    temp_safe_id = 1
+    
+    # Process each element
+    for element in elements:
+        # Check if element matches our criteria
+        if (attribute_name in element.attrib and 
+            element.attrib.get(attribute_name) in attribute_values):
+            
+            # Extract values for each metadata column
+            column_values = []
+            for col_name in metadata_columns:
+                col_value = None
                 
-                # Set ID to last used + 1
-                metadata_row['id'] = last_id + 1
-                last_id += 1
+                # Case-insensitive attribute lookup
+                for attr_key in element.attrib:
+                    if attr_key.lower() == col_name.lower():
+                        col_value = element.attrib.get(attr_key, '')
+                        break
                 
-                key = (metadata_row['id'], safe_name.lower())
-                # Assign SafeId using mapping logic
-                if key not in safe_id_map:
-                    safe_id_map[key] = next_safe_id
-                    next_safe_id += 1
+                # Fallback to exact match if case-insensitive didn't work
+                if col_value is None:
+                    col_value = element.attrib.get(col_name, '')
                 
-                metadata_row['SafeId'] = safe_id_map[key]
-                metadata_row['SafeName'] = safe_name
-                metadata_row['present_on'] = today
-                
-                # Extract other metadata columns if specified
-                for col_name in metadata_columns:
-                    if col_name not in ['SafeName', 'SafeId', 'present_on', 'id']:
-                        value = element.attrib.get(col_name, '')
-                        metadata_row[col_name] = value
-                metadata_rows.append(metadata_row)
-        
-        return metadata_rows
-    except Exception as e:
-        print(f"Error parsing metadata from {self.xml_file}: {e}")
-        return None
+                column_values.append(col_value)
+            
+            # Create combination key to avoid duplicates
+            combination_key = tuple(column_values)
+            
+            # Skip if we've already seen this combination
+            if combination_key in seen_combinations:
+                continue
+            
+            # Add to seen combinations
+            seen_combinations.add(combination_key)
+            
+            # Create metadata row
+            metadata_row = OrderedDict()
+            metadata_row['id'] = temp_safe_id
+            
+            # Add each metadata column value
+            for i, col_name in enumerate(metadata_columns):
+                metadata_row[col_name] = column_values[i]
+            
+            # Add standard metadata fields
+            metadata_row['SafeId'] = temp_safe_id
+            metadata_row['present_on'] = today
+            
+            # Add to metadata list
+            metadata_data.append(metadata_row)
+            
+            # Increment safe ID for next entry
+            temp_safe_id += 1
+    
+    return metadata_data
+
+
+def update_existing_metadata(new_metadata_data, existing_metadata, table_name):
+    """
+    Update existing metadata with new data, avoiding duplicates.
+    Based on MetadataUpdater class logic.
+    
+    Args:
+        new_metadata_data: List of new metadata rows
+        existing_metadata: List of existing metadata rows from database
+        table_name: Name of the metadata table
+    
+    Returns:
+        List of final metadata rows to insert
+    """
+    if not new_metadata_data:
+        print(f"No metadata to update for table {table_name}")
+        return []
+    
+    # Get max existing ID
+    max_existing_id = max((row['id'] for row in existing_metadata), default=0)
+    
+    # Filter for today's data
+    today = date.today().strftime("%Y-%m-%d")
+    new_metadata_today = [row for row in new_metadata_data if row.get('present_on') == today]
+    
+    if not new_metadata_today:
+        print(f"No new metadata for today ({today}) in table {table_name}")
+        return []
+    
+    # Update IDs for new metadata
+    for i, row in enumerate(new_metadata_today, start=1):
+        row['id'] = max_existing_id + i
+    
+    # Remove duplicates within new data
+    seen_safes_today = set()
+    unique_metadata_today = []
+    
+    for row in new_metadata_today:
+        safe_key = (row.get('SafeName', ''), row.get('present_on', ''))
+        if safe_key not in seen_safes_today:
+            seen_safes_today.add(safe_key)
+            unique_metadata_today.append(row)
+    
+    # Check against existing data for today
+    existing_today = [row for row in existing_metadata if row.get('present_on') == today]
+    existing_safes_today = set((row.get('SafeName', ''), row.get('present_on', '')) for row in existing_today)
+    
+    # Final filtering - only include truly new entries
+    final_metadata = []
+    for row in unique_metadata_today:
+        safe_key = (row.get('SafeName', ''), row.get('present_on', ''))
+        if safe_key not in existing_safes_today:
+            final_metadata.append(row)
+    
+    if final_metadata:
+        print(f"Prepared {len(final_metadata)} new metadata rows for {today} into {table_name}")
+    else:
+        print(f"No new unique metadata to insert for {today} in table {table_name}")
+    
+    return final_metadata
+
+
+# Example usage:
+def example_usage():
+    """
+    Example of how to use the corrected metadata processing logic
+    """
+    # Sample XML elements (in practice, these would come from XML parsing)
+    class MockElement:
+        def __init__(self, attrib):
+            self.attrib = attrib
+    
+    elements = [
+        MockElement({'type': 'safe', 'SafeName': 'Production_Safe_1', 'owner': 'admin'}),
+        MockElement({'type': 'safe', 'SafeName': 'Development_Safe', 'owner': 'dev'}),
+        MockElement({'type': 'safe', 'SafeName': 'Production_Safe_1', 'owner': 'admin'}),  # Duplicate
+        MockElement({'type': 'user', 'SafeName': 'User_Safe', 'owner': 'user'}),  # Won't match
+    ]
+    
+    # Configuration
+    attribute_name = 'type'
+    attribute_values = ['safe']
+    metadata_columns = ['SafeName', 'owner']
+    
+    # Process metadata
+    metadata_data = process_metadata_entries(
+        elements, attribute_name, attribute_values, metadata_columns
+    )
+    
+    print("Generated metadata:")
+    for row in metadata_data:
+        print(row)
+    
+    # Simulate existing metadata (empty in this case)
+    existing_metadata = []
+    
+    # Update with existing data
+    final_metadata = update_existing_metadata(
+        metadata_data, existing_metadata, "test_metadata_table"
+    )
+    
+    return final_metadata
+
+# Uncomment to test:
+# result = example_usage()
 
 
 
