@@ -1,3 +1,66 @@
+def parse_xml_file_metadata(self, output_dir, metadata_table_name, table_name, existing_metadata, main_data):
+    try:
+        # Filter out metadata with the current date
+        today = date.today().strftime("%Y-%m-%d")
+        existing_metadata = [metadata for metadata in existing_metadata if metadata.get('present_on') != today]
+
+        # Find the last ID in the existing metadata
+        last_id = max((metadata['id'] for metadata in existing_metadata), default=0)
+
+        # Initialize safe ID map and counter
+        safe_id_map = {(row['id'], row.get('SafeName', '').lower()): row['id'] for row in main_data}
+        next_safe_id = max(safe_id_map.values(), default=0) + 1
+
+        tree = ET.parse(self.xml_file)
+        root = tree.getroot()
+        namespace = root.tag.split('}')[0].strip('{')
+        ns_prefix = f'{{{namespace}}}' if namespace else ''
+        collection_element = root.find(f'.//{ns_prefix}{self.collection_config["collections"][0]}')
+        if collection_element is None:
+            print(f"Collection not found: {self.collection_config['collections'][0]} in {self.xml_file}")
+            return None
+
+        metadata_rows = []
+        elements = collection_element.findall(f'{ns_prefix}*')
+        attribute_name = self.collection_config["attribute_names"][0]
+        attribute_values = self.collection_config["attribute_values"]
+        for element in elements:
+            if attribute_name in element.attrib and element.attrib.get(attribute_name) in attribute_values:
+                metadata_row = OrderedDict()
+                safe_name = next((element.attrib.get(k, '') for k in element.attrib if k.lower() == 'safename'), '')
+                metadata_row['id'] = last_id + 1
+                key = (metadata_row['id'], safe_name.lower())
+                if key not in safe_id_map:
+                    safe_id_map[key] = next_safe_id
+                    next_safe_id += 1
+                metadata_row['SafeId'] = safe_id_map[key]
+                metadata_row['SafeName'] = safe_name
+                metadata_row['present_on'] = today
+                metadata_rows.append(metadata_row)
+                last_id += 1
+        return metadata_rows
+    except Exception as e:
+        print(f"Error parsing metadata from {self.xml_file}: {e}")
+        return None
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import ast
 
 def load_config(config_file_path):
