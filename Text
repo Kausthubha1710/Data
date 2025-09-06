@@ -1,5 +1,88 @@
 def parse_xml_file_metadata(self, output_dir, metadata_table_name, table_name):
     try:
+        tree = ET.parse(self.xml_file)
+        root = tree.getroot()
+        namespace = root.tag.split('}').strip('{')
+        ns_prefix = f'{{{namespace}}}' if namespace else ""
+        collection_element = root.find(f'.//{ns_prefix}{self.collection_config["collections"]}')
+        if collection_element is None:
+            print(f"Collection not found: {self.collection_config['collections']} in {self.xml_file}")
+            return None
+        
+        metadata_rows = []
+        today = date.today().strftime("%Y-%m-%d")
+        metadata_columns = self.collection_config.get('metadata_columns', ['SafeName'])
+        attribute_name = self.collection_config["attribute_names"]
+        attribute_values = self.collection_config["attribute_values"]
+        
+        # Initialize mapping and counters
+        safe_id_map = {}
+        next_safe_id = 1
+        
+        elements = collection_element.findall(f'{ns_prefix}')
+        last_id = 0
+        
+        for element in elements:
+            if attribute_name in element.attrib and element.attrib.get(attribute_name) in attribute_values:
+                metadata_row = OrderedDict()
+                # Extract safe name case-insensitively
+                safe_name = next((element.attrib.get(k, '') for k in element.attrib if k.lower() == 'safename'), '')
+                
+                # Set ID to last used + 1
+                metadata_row['id'] = last_id + 1
+                last_id += 1
+                
+                key = (metadata_row['id'], safe_name.lower())
+                # Assign SafeId using mapping logic
+                if key not in safe_id_map:
+                    safe_id_map[key] = next_safe_id
+                    next_safe_id += 1
+                
+                metadata_row['SafeId'] = safe_id_map[key]
+                metadata_row['SafeName'] = safe_name
+                metadata_row['present_on'] = today
+                
+                # Extract other metadata columns if specified
+                for col_name in metadata_columns:
+                    if col_name not in ['SafeName', 'SafeId', 'present_on', 'id']:
+                        value = element.attrib.get(col_name, '')
+                        metadata_row[col_name] = value
+                metadata_rows.append(metadata_row)
+        
+        return metadata_rows
+    except Exception as e:
+        print(f"Error parsing metadata from {self.xml_file}: {e}")
+        return None
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def parse_xml_file_metadata(self, output_dir, metadata_table_name, table_name):
+    try:
         today = date.today().strftime("%Y-%m-%d")
 
         # Load existing metadata from DB (if table exists)
