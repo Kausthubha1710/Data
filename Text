@@ -257,23 +257,143 @@ class TableProcessor:
             if all(part in (t.lower() for t in tokens) for part in key_parts):
                 return key
         return None
-4. Modified db_manager.py (add this method)
-Add this method to your existing DBManager class:
+4. Modified db_manager.py 
+import json
+import os
+from configparser import ConfigParser
+from datetime import date
+from psycopg2.extras import execute_values, Json
+import psycopg2
+from psycopg2 import sql
 
-python
-def load_table_data(self, table_name):
-    """Load all data from a table"""
-    try:
+class DBManager:
+    def __init__(self, credentials_path="db_credentials.txt"):
+        self.creds = self.load_credentials(credentials_path)
+        self.conn = self.connect()
+        self.schema = self.creds.get("schema", "public")
+
+    def load_credentials(self, path):
+        creds = {}
+        with open(path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and '=' in line:
+                    key, value = line.split('=')
+                    creds[key.strip()] = value.strip()
+        return creds
+
+    def connect(self):
+        return psycopg2.connect(
+            host=self.creds["host"],
+            port=self.creds["port"],
+            dbname=self.creds["database"],
+            user=self.creds["user"],
+            password=self.creds["password"],
+        )
+
+    def ensure_table(self, table_name, sample_row):
         qualified_name = sql.Identifier(self.schema, table_name)
-        sql_query = sql.SQL("SELECT * FROM {}").format(qualified_name)
+        column_defs = []
+        for col, val in sample_row.items():
+            pg_type = self.postgres_type(val)
+            column_defs.append(sql.SQL("{} {}").format(sql.Identifier(col), sql.SQL(pg_type)))
+        column_defs.append(sql.SQL('PRIMARY KEY ("id")'))
+        column_defs_sql = sql.SQL(",").join(column_defs)
+        create_table_sql = sql.SQL("CREATE TABLE IF NOT EXISTS {} ({})").format(qualified_name, column_defs_sql)
+        with self.conn.cursor() as cur:
+            cur.execute(create_table_sql)
+            self.conn.commit()
+
+    def postgres_type(self, value):
+        if isinstance(value, bool):
+            return "BOOLEAN"
+        if isinstance(value, int):
+            return "INTEGER"
+        if isinstance(value, float):
+            return "DOUBLE PRECISION"
+        return "TEXT"
+
+    def insert_rows(self, table_name, rows):
+        if not rows:
+            return
+        existing_columns = self.get_existing_columns(table_name)
+        all_columns = set()
+        for r in rows:
+            all_columns.update(r.keys())
+        column_order = sorted(list(set(existing_columns) & set(all_columns)))
+        values = [[row.get(col, None) for col in column_order] for row in rows]
+        qualified_name = sql.Identifier(self.schema, table_name)
+        cols = sql.SQL(",").join(map(sql.Identifier, column_order))
+        update_assignments = sql.SQL(", ").join(sql.SQL('{}=EXCLUDED.{}').format(sql.Identifier(col), sql.Identifier(col)) for col in column_order if col != "id")
+        insert_sql = sql.SQL("INSERT INTO {} ({}) VALUES %s ON CONFLICT (id) DO UPDATE SET {}").format(qualified_name, cols, update_assignments)
+        with self.conn.cursor() as cur:
+            execute_values(cur, insert_sql, values, page_size=100)
+            self.conn.commit()
+
+    def get_existing_columns(self, table_name):
+        sql_query = """
+            SELECT column_name FROM information_schema.columns 
+            WHERE table_schema = %s AND table_name = %s;
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(sql_query, (self.schema, table_name))
+            return [row[0] for row in cur.fetchall()]
+
+    def delete_existing_data(self, table_name):
+        sql_query = sql.SQL("DELETE FROM {}.{}").format(sql.Identifier(self.schema), sql.Identifier(table_name))
+        with self.conn.cursor() as cur:
+            cur.execute(sql_query)
+            self.conn.commit()
+
+    def write_metadata(self, table_name, rows):
+        self.ensure_table(table_name, rows[0])
+        sql_query = sql.SQL("INSERT INTO {}.{} ({}) VALUES %s").format(
+            sql.Identifier(self.schema),
+            sql.Identifier(table_name),
+            sql.SQL(",").join(map(sql.Identifier, rows[0].keys()))
+        )
+        values = [[row[col] for col in rows[0].keys()] for row in rows]
+        with self.conn.cursor() as cur:
+            execute_values(cur, sql_query, values, page_size=100)
+            self.conn.commit()
+
+    def load_metadata(self, table_name):
+        sql_query = sql.SQL("SELECT * FROM {}.{}").format(sql.Identifier(self.schema), sql.Identifier(table_name))
         with self.conn.cursor() as cur:
             cur.execute(sql_query)
             rows = cur.fetchall()
             columns = [desc[0] for desc in cur.description]
             return [dict(zip(columns, row)) for row in rows]
-    except Exception as e:
-        print(f"Error loading data from {table_name}: {e}")
-        return []
+
+    def update_metadata(self, table_name, rows):
+        self.ensure_table(table_name, rows[0])
+        sql_query = sql.SQL("INSERT INTO {}.{} ({}) VALUES %s ON CONFLICT (id) DO UPDATE SET {}").format(
+            sql.Identifier(self.schema),
+            sql.Identifier(table_name),
+            sql.SQL(",").join(map(sql.Identifier, rows[0].keys())),
+            sql.SQL(", ").join(sql.SQL('{}=EXCLUDED.{}').format(sql.Identifier(col), sql.Identifier(col)) for col in rows[0].keys() if col != "id")
+        )
+        values = [[row[col] for col in rows[0].keys()] for row in rows]
+        with self.conn.cursor() as cur:
+            execute_values(cur, sql_query, values, page_size=100)
+            self.conn.commit()
+
+    def load_table_data(self, table_name):
+        """Load all data from a table"""
+        try:
+            qualified_name = sql.Identifier(self.schema, table_name)
+            sql_query = sql.SQL("SELECT * FROM {}").format(qualified_name)
+            with self.conn.cursor() as cur:
+                cur.execute(sql_query)
+                rows = cur.fetchall()
+                columns = [desc[0] for desc in cur.description]
+                return [dict(zip(columns, row)) for row in rows]
+        except Exception as e:
+            print(f"Error loading data from {table_name}: {e}")
+            return []
+
+    def close(self):
+        self.conn.close()
 Key Changes:
 Removed JSON dependency: Now directly reads from PostgreSQL tables
 
