@@ -43,13 +43,78 @@ ORDER BY d."Date", s."SubClusterName";
 
 
 SELECT
-    COALESCE("APM SubCluster", 'Unknown SubCluster') AS "SubClusterName",
-    COUNT(DISTINCT "PAM_LOGINNAME") AS "AccountCount"
+    wir."ImportDate"::date AS "Date",
+    as2."name" AS "APM SubCluster",
+    wib."Status" AS "Status",
+    COUNT(wir."PAM_LOGINNAME") AS "Number of Accounts"
 FROM
-    pilothouse.wasabi_infora02_reporting
+    pilothouse.wasabi_infora02_reporting wir
+LEFT JOIN
+    pilothouse.wasabi_infora02_base wib
+        ON wir."PAM_LOGINNAME" = wib."PAM_LOGINNAME"
+LEFT JOIN
+    pilothouse.apm_application daps
+        ON wir."APPLICATION_BAM_VALUE" = daps.goldenapp
+LEFT JOIN
+    pilothouse.apm_applications aa
+        ON daps.apm_application = aa.id
+LEFT JOIN
+    pilothouse.apm_clusters ac
+        ON aa.apm_cluster = ac.id
+LEFT JOIN
+    pilothouse.apm_subclusters as2
+        ON aa.apm_subcluster = as2.id
 WHERE
-    "ImportDate" BETWEEN $__from::date AND $__to::date
+    wir."PAM_LOGINNAME" NOT IN (
+        SELECT wim.account_name
+        FROM pilothouse.wasabi_infraaccounts_metadata wim
+        WHERE wim.infra_type = 'oracle infra_others'
+    )
+    AND as2."id" IN ($ApmSubCluster)
 GROUP BY
-    COALESCE("APM SubCluster", 'Unknown SubCluster')
+    wir."ImportDate"::date,
+    as2."name",
+    wib."Status"
 ORDER BY
-    "AccountCount" DESC;
+    wir."ImportDate"::date,
+    as2."name",
+    wib."Status";
+
+
+SELECT  
+    wir."ImportDate"::date AS "Date",  
+    as2."name" AS "APM SubCluster",  
+    COUNT(wir."PAM_LOGINNAME") AS "Number of Accounts"  
+FROM  
+    pilothouse.wasabi_infora02_reporting wir  
+LEFT JOIN  
+    pilothouse.apm_application daps  
+        ON wir."APPLICATION_BAM_VALUE" = daps.goldenapp  
+LEFT JOIN  
+    pilothouse.apm_applications aa  
+        ON daps.apm_application = aa.id  
+LEFT JOIN  
+    pilothouse.apm_clusters ac  
+        ON aa.apm_cluster = ac.id  
+LEFT JOIN  
+    pilothouse.apm_subclusters as2  
+        ON aa.apm_subcluster = as2.id  
+WHERE  
+    wir."PAM_LOGINNAME" NOT IN (  
+        SELECT wim.account_name  
+        FROM pilothouse.wasabi_infraaccounts_metadata wim  
+        WHERE wim.infra_type = 'oracle infra_others'  
+    )  
+    AND as2."id" IN ($ApmSubCluster)  
+GROUP BY  
+    wir."ImportDate"::date,  
+    as2."name"  
+ORDER BY  
+    wir."ImportDate"::date,  
+    as2."name";  
+  
+  
+Now i want to create one more bar chart for no.of accounts per subcluster (divided by each Status) Status column is present in pilothouse.wasabi_infora02_base  
+  
+Did you understand my requirement?  
+If yes then tell me what you understood?
