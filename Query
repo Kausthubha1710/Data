@@ -40,109 +40,13 @@ ORDER BY d."Date", s."SubClusterName";
 ............
 
 
+
 SELECT 
-    DATE(wir."ImportDate") as "time",
-    COALESCE(as2."name", 'Unknown SubCluster') as "APM SubCluster",
-    COUNT(*) as "count"
-FROM pilothouse.wasabi_infora02_reporting wir
-LEFT JOIN pilothouse.apm_application_daps aad 
-    ON wir."APPLICATION_BAM_VALUE" = aad.goldenapp_auid
-LEFT JOIN pilothouse.apm_applications aa 
-    ON aa.id = aad.apm_application
-LEFT JOIN pilothouse.apm_clusters ac 
-    ON aa.apm_cluster = ac.id
-LEFT JOIN pilothouse.apm_subclusters as2 
-    ON aa.apm_subcluster = as2.id
-WHERE wir."PAM_LOGINNAME" NOT IN (
-    SELECT wim.account_name 
-    FROM pilothouse.wasabi_infraaccounts_metadata wim 
-    WHERE wim.infra_type = 'oracle_infra_others'
-)
-AND as2."id" IN ($ApmSubCluster)
-AND DATE(wir."ImportDate") BETWEEN '${__from:date:YYYY-MM-DD}' AND '${__to:date:YYYY-MM-DD}'
-GROUP BY DATE(wir."ImportDate"), COALESCE(as2."name", 'Unknown SubCluster')
-ORDER BY DATE(wir."ImportDate"), "APM SubCluster"
-
-
-
-Let me help you debug the query. There could be several issues. Let's start with a simpler version and add debugging steps:
-
-Step 1: First, let's check if we have any data at all
-
-```sql
-SELECT 
-    COUNT(*) as total_records,
-    MIN("ImportDate") as earliest_date,
-    MAX("ImportDate") as latest_date
-FROM pilothouse.wasabi_infora02_reporting
-WHERE "ImportDate" BETWEEN '${__from:date:YYYY-MM-DD}' AND '${__to:date:YYYY-MM-DD}'
-```
-
-Step 2: Check if the joins are working
-
-```sql
-SELECT 
-    DATE(wir."ImportDate") as "time",
-    wir."APPLICATION_BAM_VALUE",
-    aad.goldenapp_auid,
-    as2."name" as subcluster_name,
-    as2."id" as subcluster_id
-FROM pilothouse.wasabi_infora02_reporting wir
-LEFT JOIN pilothouse.apm_application_daps aad 
-    ON wir."APPLICATION_BAM_VALUE" = aad.goldenapp_auid
-LEFT JOIN pilothouse.apm_applications aa 
-    ON aa.id = aad.apm_application
-LEFT JOIN pilothouse.apm_subclusters as2 
-    ON aa.apm_subcluster = as2.id
-WHERE wir."ImportDate" BETWEEN '${__from:date:YYYY-MM-DD}' AND '${__to:date:YYYY-MM-DD}'
-LIMIT 10
-```
-
-Step 3: Final optimized query with fixes
-
-```sql
-SELECT 
-    DATE(wir."ImportDate") as "time",
-    COALESCE(as2."name", 'Unknown SubCluster') as "APM SubCluster",
-    COUNT(*) as "count"
-FROM pilothouse.wasabi_infora02_reporting wir
-LEFT JOIN pilothouse.apm_application_daps aad 
-    ON TRIM(wir."APPLICATION_BAM_VALUE") = TRIM(aad.goldenapp_auid)
-LEFT JOIN pilothouse.apm_applications aa 
-    ON aa.id = aad.apm_application
-LEFT JOIN pilothouse.apm_subclusters as2 
-    ON aa.apm_subcluster = as2.id
-WHERE wir."PAM_LOGINNAME" NOT IN (
-    SELECT wim.account_name 
-    FROM pilothouse.wasabi_infraaccounts_metadata wim 
-    WHERE wim.infra_type = 'oracle_infra_others'
-)
-AND (as2."id" IN ($ApmSubCluster) OR as2."id" IS NULL)
-AND wir."ImportDate"::date BETWEEN '${__from:date:YYYY-MM-DD}'::date AND '${__to:date:YYYY-MM-DD}'::date
-GROUP BY DATE(wir."ImportDate"), COALESCE(as2."name", 'Unknown SubCluster')
-ORDER BY DATE(wir."ImportDate"), "APM SubCluster"
-```
-
-Common issues to check:
-
-1. Date format: Try casting with ::date if "ImportDate" is text
-2. Case sensitivity: Table/column names might be case-sensitive
-3. JOIN conditions: Added TRIM() to handle whitespace issues
-4. NULL handling: Modified subcluster filter to include NULL values
-5. Time range: Make sure your Grafana time range matches your data dates
-
-Alternative if still no data:
-
-```sql
--- Test without filters first
-SELECT 
-    DATE("ImportDate") as "time",
-    'All Records' as "Category",
-    COUNT(*) as "count"
-FROM pilothouse.wasabi_infora02_reporting
-WHERE "ImportDate"::date BETWEEN '${__from:date:YYYY-MM-DD}'::date AND '${__to:date:YYYY-MM-DD}'::date
-GROUP BY DATE("ImportDate")
-ORDER BY DATE("ImportDate")
-```
-
-Run these queries step by step to identify where the issue lies. Start with the simplest query and gradually add complexity until you find which part is causing the problem.
+    "APM SubCluster" as subcluster,
+    COUNT(DISTINCT PAM_LOGINNAME) as account_count
+FROM your_table_name
+WHERE PAM_LOGINNAME IS NOT NULL 
+  AND PAM_LOGINNAME != ''
+  AND "APM SubCluster" IS NOT NULL
+GROUP BY "APM SubCluster"
+ORDER BY account_count DESC;
