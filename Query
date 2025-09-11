@@ -29,6 +29,6 @@ LEFT JOIN pilothouse.apm_applications aa
     ON aa.id = aad.apm_application
 LEFT JOIN pilothouse.apm_subclusters as2
     ON aa.apm_subcluster = as2.id
-    AND COALESCE(as2."name", 'Unknown SubCluster') = s."SubClusterName"
+WHERE COALESCE(as2."name", 'Unknown SubCluster') = s."SubClusterName"
 GROUP BY d."Date", s."SubClusterName"
 ORDER BY d."Date", s."SubClusterName";
