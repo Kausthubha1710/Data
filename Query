@@ -41,12 +41,15 @@ ORDER BY d."Date", s."SubClusterName";
 
 
 
-SELECT 
-    "APM SubCluster" as subcluster,
-    COUNT(DISTINCT PAM_LOGINNAME) as account_count
-FROM your_table_name
-WHERE PAM_LOGINNAME IS NOT NULL 
-  AND PAM_LOGINNAME != ''
-  AND "APM SubCluster" IS NOT NULL
-GROUP BY "APM SubCluster"
-ORDER BY account_count DESC;
+
+SELECT
+    COALESCE("APM SubCluster", 'Unknown SubCluster') AS "SubClusterName",
+    COUNT(DISTINCT "PAM_LOGINNAME") AS "AccountCount"
+FROM
+    pilothouse.wasabi_infora02_reporting
+WHERE
+    "ImportDate" BETWEEN $__from::date AND $__to::date
+GROUP BY
+    COALESCE("APM SubCluster", 'Unknown SubCluster')
+ORDER BY
+    "AccountCount" DESC;
