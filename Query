@@ -1,31 +1,34 @@
+WITH date_range AS (
+    SELECT generate_series(
+        (SELECT MIN("ImportDate")::date FROM pilothouse.wasabi_infora02_reporting),
+        (SELECT MAX("ImportDate")::date FROM pilothouse.wasabi_infora02_reporting),
+        interval '1 day'
+    )::date AS "Date"
+),
+subclusters AS (
+    SELECT DISTINCT COALESCE(as2."name", 'Unknown SubCluster') AS "SubClusterName"
+    FROM pilothouse.wasabi_infora02_reporting wir
+    LEFT JOIN pilothouse.apm_application_daps aad
+        ON wir."APPLICATION_BAM_VALUE" = aad.goldenapp_auid
+    LEFT JOIN pilothouse.apm_applications aa
+        ON aa.id = aad.apm_application
+    LEFT JOIN pilothouse.apm_subclusters as2
+        ON aa.apm_subcluster = as2.id
+)
 SELECT
-    wir."ImportDate"::date AS "Date",
-    COALESCE(as2."name", 'Unknown SubCluster') AS "APM SubCluster",
-    COUNT(*) AS "Count"
-FROM
-    pilothouse.wasabi_infora02_reporting wir
-LEFT JOIN
-    pilothouse.apm_application_daps aad
+    d."Date",
+    s."SubClusterName",
+    COUNT(wir."PAM_LOGINNAME") AS "Count"
+FROM date_range d
+CROSS JOIN subclusters s
+LEFT JOIN pilothouse.wasabi_infora02_reporting wir
+    ON wir."ImportDate"::date = d."Date"
+LEFT JOIN pilothouse.apm_application_daps aad
     ON wir."APPLICATION_BAM_VALUE" = aad.goldenapp_auid
-LEFT JOIN
-    pilothouse.apm_applications aa
+LEFT JOIN pilothouse.apm_applications aa
     ON aa.id = aad.apm_application
-LEFT JOIN
-    pilothouse.apm_clusters ac
-    ON aa.apm_cluster = ac.id
-LEFT JOIN
-    pilothouse.apm_subclusters as2
+LEFT JOIN pilothouse.apm_subclusters as2
     ON aa.apm_subcluster = as2.id
-WHERE
-    wir."PAM LOGINNAME" NOT IN (
-        SELECT wim.account_name
-        FROM pilothouse.wasabi_infraaccounts_metadata wim
-        WHERE wim.infra_type = 'oracle_infra_others'
-    )
-    AND as2."id" IN ($ApmSubCluster)   -- Grafana variable
-GROUP BY
-    wir."ImportDate"::date,
-    COALESCE(as2."name", 'Unknown SubCluster')
-ORDER BY
-    wir."ImportDate"::date,
-    "APM SubCluster";
+    AND COALESCE(as2."name", 'Unknown SubCluster') = s."SubClusterName"
+GROUP BY d."Date", s."SubClusterName"
+ORDER BY d."Date", s."SubClusterName";
