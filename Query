@@ -40,7 +40,7 @@ ORDER BY d."Date", s."SubClusterName";
 ............
 
 SELECT
-    date_trunc('$Interval', wir."ImportDate") AS "time",
+    date_trunc('$Interval', wir."ImportDate"::timestamp) AS "time",
     COALESCE(as2."name", 'Unknown SubCluster') AS "SubClusterName",
     COUNT(wir."PAM_LOGINNAME") AS "Count"
 FROM
@@ -59,7 +59,7 @@ WHERE
         WHERE wim.infra_type = 'oracle_infra_others'
     )
 GROUP BY
-    date_trunc('$Interval', wir."ImportDate"),
+    date_trunc('$Interval', wir."ImportDate"::timestamp),
     COALESCE(as2."name", 'Unknown SubCluster')
 ORDER BY
-    date_trunc('$Interval', wir."ImportDate");
+    date_trunc('$Interval', wir."ImportDate"::timestamp);
