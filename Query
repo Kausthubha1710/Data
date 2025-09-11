@@ -1,0 +1,31 @@
+SELECT
+    wir."ImportDate"::date AS "Date",
+    COALESCE(as2."name", 'Unknown SubCluster') AS "APM SubCluster",
+    COUNT(*) AS "Count"
+FROM
+    pilothouse.wasabi_infora02_reporting wir
+LEFT JOIN
+    pilothouse.apm_application_daps aad
+    ON wir."APPLICATION_BAM_VALUE" = aad.goldenapp_auid
+LEFT JOIN
+    pilothouse.apm_applications aa
+    ON aa.id = aad.apm_application
+LEFT JOIN
+    pilothouse.apm_clusters ac
+    ON aa.apm_cluster = ac.id
+LEFT JOIN
+    pilothouse.apm_subclusters as2
+    ON aa.apm_subcluster = as2.id
+WHERE
+    wir."PAM LOGINNAME" NOT IN (
+        SELECT wim.account_name
+        FROM pilothouse.wasabi_infraaccounts_metadata wim
+        WHERE wim.infra_type = 'oracle_infra_others'
+    )
+    AND as2."id" IN ($ApmSubCluster)   -- Grafana variable
+GROUP BY
+    wir."ImportDate"::date,
+    COALESCE(as2."name", 'Unknown SubCluster')
+ORDER BY
+    wir."ImportDate"::date,
+    "APM SubCluster";
