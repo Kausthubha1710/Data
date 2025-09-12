@@ -1,37 +1,24 @@
-Got it 👍 — the error
-
-pq: function to_timestamp(boolean) does not exist
-
-is happening because your "ImportDate" column is not text, but already a date (or maybe timestamp) type.
-
-👉 If the column is already date, you don’t need to_timestamp() or a format mask at all. You can just cast or use it directly.
-
-
----
-
-✅ Fixed Query for Grafana bar graph
-
 SELECT
-    /* Grafana expects a column called "time" for the X-axis */
+    -- Grafana expects a column called "time" for the X-axis
     date_trunc('day', wir."ImportDate") AS "time",
     as2."name" AS "APM SubCluster",
 
-    COUNT(DISTINCT CASE WHEN wib."Status" = 'Pending' THEN wib.id END) AS "PENDING",
+    COUNT(DISTINCT CASE WHEN wib."Status" = 'Pending' THEN wib.id END)     AS "PENDING",
     COUNT(DISTINCT CASE WHEN wib."Status" = 'InProgress' THEN wib.id END) AS "IN_PROGRESS",
-    COUNT(DISTINCT CASE WHEN wib."Status" = 'Blocked' THEN wib.id END) AS "BLOCKED",
-    COUNT(DISTINCT CASE WHEN wib."Status" = 'Completed' THEN wib.id END) AS "COMPLETED"
+    COUNT(DISTINCT CASE WHEN wib."Status" = 'Blocked' THEN wib.id END)    AS "BLOCKED",
+    COUNT(DISTINCT CASE WHEN wib."Status" = 'Completed' THEN wib.id END)  AS "COMPLETED"
 
 FROM pilothouse.wasabi_infora02_reporting wir
 LEFT JOIN pilothouse.wasabi_infora02_base wib 
-    ON wir."PAM_LOGINNAME" = wib."PAM_LOGINNAME"
+       ON wir."PAM_LOGINNAME" = wib."PAM_LOGINNAME"
 LEFT JOIN pilothouse.apm_application_daps aad 
-    ON wir."APPLICATION_BAM_VALUE" = aad.goldenapp_auid
+       ON wir."APPLICATION_BAM_VALUE" = aad.goldenapp_auid
 LEFT JOIN pilothouse.apm_applications aa 
-    ON aad.apm_application = aa.id
+       ON aad.apm_application = aa.id
 LEFT JOIN pilothouse.apm_clusters ac 
-    ON aa.apm_cluster = ac.id
+       ON aa.apm_cluster = ac.id
 LEFT JOIN pilothouse.apm_subclusters as2 
-    ON aa.apm_subcluster = as2.id
+       ON aa.apm_subcluster = as2.id
 
 WHERE wir."PAM_LOGINNAME" NOT IN (
     SELECT wim.account_name
@@ -39,7 +26,7 @@ WHERE wir."PAM_LOGINNAME" NOT IN (
     WHERE wim.infra_type = 'oracle_infra_others'
 )
 
--- Grafana’s $__timeFilter macro works directly on date/timestamp columns
+-- Grafana time picker filter (works directly on date/timestamp columns)
 AND $__timeFilter(wir."ImportDate")
 
 GROUP BY
@@ -49,28 +36,3 @@ GROUP BY
 ORDER BY
     date_trunc('day', wir."ImportDate"),
     as2."name";
-
-
----
-
-✅ Fix for your debug query (checking ImportDate values)
-
-If you just want to list them:
-
-SELECT DISTINCT
-    wir."ImportDate"::date AS import_date
-FROM pilothouse.wasabi_infora02_reporting wir
-ORDER BY import_date DESC;
-
-
----
-
-👉 So:
-
-If ImportDate is already date or timestamp, don’t wrap it in to_timestamp().
-
-Only use to_timestamp() if the column is text or varchar with inconsistent date formats.
-
-
-
----
