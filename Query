@@ -1,120 +1,64 @@
-WITH date_range AS (
-    SELECT generate_series(
-        (SELECT MIN("ImportDate")::date FROM pilothouse.wasabi_infora02_reporting),
-        (SELECT MAX("ImportDate")::date FROM pilothouse.wasabi_infora02_reporting),
-        interval '1 day'
-    )::date AS "Date"
-),
-subclusters AS (
-    SELECT DISTINCT COALESCE(as2."name", 'Unknown SubCluster') AS "SubClusterName"
-    FROM pilothouse.wasabi_infora02_reporting wir
-    LEFT JOIN pilothouse.apm_application_daps aad
-        ON wir."APPLICATION_BAM_VALUE" = aad.goldenapp_auid
-    LEFT JOIN pilothouse.apm_applications aa
-        ON aa.id = aad.apm_application
-    LEFT JOIN pilothouse.apm_subclusters as2
-        ON aa.apm_subcluster = as2.id
-)
-SELECT
-    d."Date",
-    s."SubClusterName",
-    COUNT(wir."PAM_LOGINNAME") AS "Count"
-FROM date_range d
-CROSS JOIN subclusters s
-LEFT JOIN pilothouse.wasabi_infora02_reporting wir
-    ON wir."ImportDate"::date = d."Date"
-LEFT JOIN pilothouse.apm_application_daps aad
-    ON wir."APPLICATION_BAM_VALUE" = aad.goldenapp_auid
-LEFT JOIN pilothouse.apm_applications aa
-    ON aa.id = aad.apm_application
-LEFT JOIN pilothouse.apm_subclusters as2
-    ON aa.apm_subcluster = as2.id
-WHERE COALESCE(as2."name", 'Unknown SubCluster') = s."SubClusterName"
-GROUP BY d."Date", s."SubClusterName"
-ORDER BY d."Date", s."SubClusterName";
+Step 1. Check the column type
+
+Run:
+
+\d pilothouse.wasabi_infora02_reporting
+
+If ImportDate is TEXT / VARCHAR, that’s why the formats differ.
+
+If it’s already a proper DATE, PostgreSQL will store everything consistently, and it’s just a display issue depending on your datestyle.
 
 
+---
+
+✅ Step 2. Convert all to DATE
+
+If ImportDate is text, first safely convert all rows into real DATE values using to_date() with multiple formats:
+
+SELECT ImportDate,
+       CASE
+         WHEN ImportDate ~ '^\d{4}-\d{2}-\d{2}$' 
+           THEN to_date(ImportDate, 'YYYY-MM-DD')
+         WHEN ImportDate ~ '^\d{2}-\d{2}-\d{2}$' 
+           THEN to_date(ImportDate, 'DD-MM-YY')
+         ELSE NULL
+       END AS normalized_date
+FROM pilothouse.wasabi_infora02_reporting;
+
+That way you can preview how each row converts.
 
 
+---
 
-............
+✅ Step 3. Update the table
 
+Once you’re confident, you can update in place:
 
-
-
-SELECT
-    wir."ImportDate"::date AS "Date",
-    as2."name" AS "APM SubCluster",
-    wib."Status" AS "Status",
-    COUNT(wir."PAM_LOGINNAME") AS "Number of Accounts"
-FROM
-    pilothouse.wasabi_infora02_reporting wir
-LEFT JOIN
-    pilothouse.wasabi_infora02_base wib
-        ON wir."PAM_LOGINNAME" = wib."PAM_LOGINNAME"
-LEFT JOIN
-    pilothouse.apm_application daps
-        ON wir."APPLICATION_BAM_VALUE" = daps.goldenapp
-LEFT JOIN
-    pilothouse.apm_applications aa
-        ON daps.apm_application = aa.id
-LEFT JOIN
-    pilothouse.apm_clusters ac
-        ON aa.apm_cluster = ac.id
-LEFT JOIN
-    pilothouse.apm_subclusters as2
-        ON aa.apm_subcluster = as2.id
-WHERE
-    wir."PAM_LOGINNAME" NOT IN (
-        SELECT wim.account_name
-        FROM pilothouse.wasabi_infraaccounts_metadata wim
-        WHERE wim.infra_type = 'oracle infra_others'
-    )
-    AND as2."id" IN ($ApmSubCluster)
-GROUP BY
-    wir."ImportDate"::date,
-    as2."name",
-    wib."Status"
-ORDER BY
-    wir."ImportDate"::date,
-    as2."name",
-    wib."Status";
+UPDATE pilothouse.wasabi_infora02_reporting
+SET ImportDate = CASE
+    WHEN ImportDate ~ '^\d{4}-\d{2}-\d{2}$' 
+      THEN to_char(to_date(ImportDate, 'YYYY-MM-DD'), 'YYYY-MM-DD')
+    WHEN ImportDate ~ '^\d{2}-\d{2}-\d{2}$' 
+      THEN to_char(to_date(ImportDate, 'DD-MM-YY'), 'YYYY-MM-DD')
+    ELSE ImportDate
+  END;
 
 
-SELECT  
-    wir."ImportDate"::date AS "Date",  
-    as2."name" AS "APM SubCluster",  
-    COUNT(wir."PAM_LOGINNAME") AS "Number of Accounts"  
-FROM  
-    pilothouse.wasabi_infora02_reporting wir  
-LEFT JOIN  
-    pilothouse.apm_application daps  
-        ON wir."APPLICATION_BAM_VALUE" = daps.goldenapp  
-LEFT JOIN  
-    pilothouse.apm_applications aa  
-        ON daps.apm_application = aa.id  
-LEFT JOIN  
-    pilothouse.apm_clusters ac  
-        ON aa.apm_cluster = ac.id  
-LEFT JOIN  
-    pilothouse.apm_subclusters as2  
-        ON aa.apm_subcluster = as2.id  
-WHERE  
-    wir."PAM_LOGINNAME" NOT IN (  
-        SELECT wim.account_name  
-        FROM pilothouse.wasabi_infraaccounts_metadata wim  
-        WHERE wim.infra_type = 'oracle infra_others'  
-    )  
-    AND as2."id" IN ($ApmSubCluster)  
-GROUP BY  
-    wir."ImportDate"::date,  
-    as2."name"  
-ORDER BY  
-    wir."ImportDate"::date,  
-    as2."name";  
-  
-  
-Now i want to create one more bar chart for no.of accounts per subcluster (divided by each Status) Status column is present in pilothouse.wasabi_infora02_base  
-  
-Did you understand my requirement?  
-If yes then tell me what you understood?
+---
+
+⚡ Even Better (Recommended)
+
+Instead of storing as text, convert the column type once:
+
+ALTER TABLE pilothouse.wasabi_infora02_reporting
+ALTER COLUMN ImportDate TYPE date
+USING (
+  CASE
+    WHEN ImportDate ~ '^\d{4}-\d{2}-\d{2}$' 
+      THEN to_date(ImportDate, 'YYYY-MM-DD')
+    WHEN ImportDate ~ '^\d{2}-\d{2}-\d{2}$' 
+      THEN to_date(ImportDate, 'DD-MM-YY')
+  END
+);
+
+After this, ImportDate will always be a proper DATE. PostgreSQL will internally store it consistently, and when you SELECT, it will display as YYYY-MM-DD.
