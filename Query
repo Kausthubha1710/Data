@@ -1,64 +1,76 @@
-Step 1. Check the column type
+Got it 👍 — the error
 
-Run:
+pq: function to_timestamp(boolean) does not exist
 
-\d pilothouse.wasabi_infora02_reporting
+is happening because your "ImportDate" column is not text, but already a date (or maybe timestamp) type.
 
-If ImportDate is TEXT / VARCHAR, that’s why the formats differ.
-
-If it’s already a proper DATE, PostgreSQL will store everything consistently, and it’s just a display issue depending on your datestyle.
+👉 If the column is already date, you don’t need to_timestamp() or a format mask at all. You can just cast or use it directly.
 
 
 ---
 
-✅ Step 2. Convert all to DATE
+✅ Fixed Query for Grafana bar graph
 
-If ImportDate is text, first safely convert all rows into real DATE values using to_date() with multiple formats:
+SELECT
+    /* Grafana expects a column called "time" for the X-axis */
+    date_trunc('day', wir."ImportDate") AS "time",
+    as2."name" AS "APM SubCluster",
 
-SELECT ImportDate,
-       CASE
-         WHEN ImportDate ~ '^\d{4}-\d{2}-\d{2}$' 
-           THEN to_date(ImportDate, 'YYYY-MM-DD')
-         WHEN ImportDate ~ '^\d{2}-\d{2}-\d{2}$' 
-           THEN to_date(ImportDate, 'DD-MM-YY')
-         ELSE NULL
-       END AS normalized_date
-FROM pilothouse.wasabi_infora02_reporting;
+    COUNT(DISTINCT CASE WHEN wib."Status" = 'Pending' THEN wib.id END) AS "PENDING",
+    COUNT(DISTINCT CASE WHEN wib."Status" = 'InProgress' THEN wib.id END) AS "IN_PROGRESS",
+    COUNT(DISTINCT CASE WHEN wib."Status" = 'Blocked' THEN wib.id END) AS "BLOCKED",
+    COUNT(DISTINCT CASE WHEN wib."Status" = 'Completed' THEN wib.id END) AS "COMPLETED"
 
-That way you can preview how each row converts.
+FROM pilothouse.wasabi_infora02_reporting wir
+LEFT JOIN pilothouse.wasabi_infora02_base wib 
+    ON wir."PAM_LOGINNAME" = wib."PAM_LOGINNAME"
+LEFT JOIN pilothouse.apm_application_daps aad 
+    ON wir."APPLICATION_BAM_VALUE" = aad.goldenapp_auid
+LEFT JOIN pilothouse.apm_applications aa 
+    ON aad.apm_application = aa.id
+LEFT JOIN pilothouse.apm_clusters ac 
+    ON aa.apm_cluster = ac.id
+LEFT JOIN pilothouse.apm_subclusters as2 
+    ON aa.apm_subcluster = as2.id
+
+WHERE wir."PAM_LOGINNAME" NOT IN (
+    SELECT wim.account_name
+    FROM pilothouse.wasabi_infraaccounts_metadata wim
+    WHERE wim.infra_type = 'oracle_infra_others'
+)
+
+-- Grafana’s $__timeFilter macro works directly on date/timestamp columns
+AND $__timeFilter(wir."ImportDate")
+
+GROUP BY
+    date_trunc('day', wir."ImportDate"),
+    as2."name"
+
+ORDER BY
+    date_trunc('day', wir."ImportDate"),
+    as2."name";
 
 
 ---
 
-✅ Step 3. Update the table
+✅ Fix for your debug query (checking ImportDate values)
 
-Once you’re confident, you can update in place:
+If you just want to list them:
 
-UPDATE pilothouse.wasabi_infora02_reporting
-SET ImportDate = CASE
-    WHEN ImportDate ~ '^\d{4}-\d{2}-\d{2}$' 
-      THEN to_char(to_date(ImportDate, 'YYYY-MM-DD'), 'YYYY-MM-DD')
-    WHEN ImportDate ~ '^\d{2}-\d{2}-\d{2}$' 
-      THEN to_char(to_date(ImportDate, 'DD-MM-YY'), 'YYYY-MM-DD')
-    ELSE ImportDate
-  END;
+SELECT DISTINCT
+    wir."ImportDate"::date AS import_date
+FROM pilothouse.wasabi_infora02_reporting wir
+ORDER BY import_date DESC;
 
 
 ---
 
-⚡ Even Better (Recommended)
+👉 So:
 
-Instead of storing as text, convert the column type once:
+If ImportDate is already date or timestamp, don’t wrap it in to_timestamp().
 
-ALTER TABLE pilothouse.wasabi_infora02_reporting
-ALTER COLUMN ImportDate TYPE date
-USING (
-  CASE
-    WHEN ImportDate ~ '^\d{4}-\d{2}-\d{2}$' 
-      THEN to_date(ImportDate, 'YYYY-MM-DD')
-    WHEN ImportDate ~ '^\d{2}-\d{2}-\d{2}$' 
-      THEN to_date(ImportDate, 'DD-MM-YY')
-  END
-);
+Only use to_timestamp() if the column is text or varchar with inconsistent date formats.
 
-After this, ImportDate will always be a proper DATE. PostgreSQL will internally store it consistently, and when you SELECT, it will display as YYYY-MM-DD.
+
+
+---
