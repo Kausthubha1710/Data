@@ -1,53 +1,5 @@
 SELECT
-    -- Grafana expects a column called "time" for the X-axis
-    date_trunc('day', wir."ImportDate") AS "time",
-    as2."name" AS "APM SubCluster",
-
-    COUNT(DISTINCT CASE WHEN wib."Status" = 'Pending' THEN wib.id END)     AS "PENDING",
-    COUNT(DISTINCT CASE WHEN wib."Status" = 'InProgress' THEN wib.id END) AS "IN_PROGRESS",
-    COUNT(DISTINCT CASE WHEN wib."Status" = 'Blocked' THEN wib.id END)    AS "BLOCKED",
-    COUNT(DISTINCT CASE WHEN wib."Status" = 'Completed' THEN wib.id END)  AS "COMPLETED"
-
-FROM pilothouse.wasabi_infora02_reporting wir
-LEFT JOIN pilothouse.wasabi_infora02_base wib 
-       ON wir."PAM_LOGINNAME" = wib."PAM_LOGINNAME"
-LEFT JOIN pilothouse.apm_application_daps aad 
-       ON wir."APPLICATION_BAM_VALUE" = aad.goldenapp_auid
-LEFT JOIN pilothouse.apm_applications aa 
-       ON aad.apm_application = aa.id
-LEFT JOIN pilothouse.apm_clusters ac 
-       ON aa.apm_cluster = ac.id
-LEFT JOIN pilothouse.apm_subclusters as2 
-       ON aa.apm_subcluster = as2.id
-
-WHERE wir."PAM_LOGINNAME" NOT IN (
-    SELECT wim.account_name
-    FROM pilothouse.wasabi_infraaccounts_metadata wim
-    WHERE wim.infra_type = 'oracle_infra_others'
-)
-
--- Grafana time picker filter (works directly on date/timestamp columns)
-AND $__timeFilter(wir."ImportDate")
-
-GROUP BY
-    date_trunc('day', wir."ImportDate"),
-    as2."name"
-
-ORDER BY
-    date_trunc('day', wir."ImportDate"),
-    as2."name";
-
-
-
-
-
-
-
----------------
-
-
-SELECT
-    date_trunc('day', "ImportDate"::date) AS "time",
+    date_trunc('day', wir."ImportDate"::timestamp) AS "time",
     as2."name" AS "APM SubCluster",
 
     COUNT(DISTINCT CASE WHEN wib."Status" = 'Pending'    THEN wib.id END) AS "PENDING",
@@ -73,12 +25,17 @@ WHERE wir."PAM_LOGINNAME" NOT IN (
     WHERE wim.infra_type = 'oracle_infra_others'
 )
 
-AND "ImportDate"::date BETWEEN $__timeFrom()::date AND $__timeTo()::date
+-- 🔑 Combined filter: dropdown OR time picker
+AND (
+    (${importDate:single} IS NOT NULL AND wir."ImportDate"::date = ${importDate})
+    OR
+    (${importDate:single} IS NULL AND $__timeFilter(wir."ImportDate"::timestamp))
+)
 
 GROUP BY
-    date_trunc('day', "ImportDate"::date),
+    date_trunc('day', wir."ImportDate"::timestamp),
     as2."name"
 
 ORDER BY
-    date_trunc('day', "ImportDate"::date),
+    date_trunc('day', wir."ImportDate"::timestamp),
     as2."name";
