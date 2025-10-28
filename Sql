@@ -160,3 +160,85 @@ SELECT * FROM historical_data
 UNION ALL
 SELECT * FROM latest_data
 ORDER BY "time", "APM SubCluster";
+
+------------------------------------------------------------------------------
+
+
+WITH latest_date AS (
+  SELECT MAX("ImportDate"::date) AS max_import_date
+  FROM pilothouse.wwwwwwwasabi_infora02_reporting
+),
+
+-- Step 1: Historical data (unchanged)
+historical_data AS (
+  SELECT
+    date_trunc('day', wir."ImportDate"::date) AS "time",
+    as2."name" AS "APM SubCluster",
+    COUNT(CASE WHEN wir."Status" = 'Pending' THEN wir.id END) AS "PENDING",
+    COUNT(CASE WHEN wir."Status" = 'InProgress' THEN wir.id END) AS "IN_PROGRESS",
+    COUNT(CASE WHEN wir."Status" = 'Blocked' THEN wir.id END) AS "BLOCKED",
+    COUNT(CASE WHEN wir."Status" = 'Completed' THEN wir.id END) AS "COMPLETED"
+  FROM pilothouse.wwwwwwwasabi_infora02_reporting wir
+  LEFT JOIN pilothouse.apm_application_daps aad 
+    ON wir."APPLICATION_BAM_VALUE" = aad.goldenapp_auid
+  LEFT JOIN pilothouse.apm_applications aa 
+    ON aa.id = aad.apm_application
+  LEFT JOIN pilothouse.apm_clusters ac 
+    ON aa.apm_cluster = ac.id
+  LEFT JOIN pilothouse.apm_subclusters as2 
+    ON aa.apm_subcluster = as2.id
+  WHERE wir."ImportDate"::date < (SELECT max_import_date FROM latest_date)
+    AND as2."id" IN ($ApmSubCluster)
+    AND wir."ENVIRONMENT Server" IN (${Environment:sqlstring})
+  GROUP BY date_trunc('day', wir."ImportDate"::date), as2."name"
+),
+
+-- Step 2: Latest date — merged with _base (live)
+latest_data AS (
+  SELECT
+    date_trunc('day', wir."ImportDate"::date) AS "time",
+    as2."name" AS "APM SubCluster",
+    COUNT(CASE WHEN COALESCE(wib."Status", wir."Status") = 'Pending' THEN wir.id END) AS "PENDING",
+    COUNT(CASE WHEN COALESCE(wib."Status", wir."Status") = 'InProgress' THEN wir.id END) AS "IN_PROGRESS",
+    COUNT(CASE WHEN COALESCE(wib."Status", wir."Status") = 'Blocked' THEN wir.id END) AS "BLOCKED",
+    COUNT(CASE WHEN COALESCE(wib."Status", wir."Status") = 'Completed' THEN wir.id END) AS "COMPLETED"
+  FROM pilothouse.wwwwwwwasabi_infora02_reporting wir
+  LEFT JOIN pilothouse.wwwwwwwasabi_infora02_base wib
+    ON wir."PAM_LOGINNAME" = wib."PAM_LOGINNAME"
+    AND wir."APPLICATION_BAM_VALUE" = wib."APPLICATION_BAM_VALUE"
+    AND wir."pam_timestamp" = wib."pam_timestamp"
+    AND wir."APPLICATION" = wib."APPLICATION"
+    AND wir."SERVER_ID" = wib."SERVER_ID"
+    AND wir."ENVIRONMENT Server" = wib."ENVIRONMENT Server"
+    AND wir."AREA" = wib."AREA"
+    AND wir."INFRAVERSION" = wib."INFRAVERSION"
+    AND wir."PAMELA_COUNTRY" = wib."PAMELA_COUNTRY"
+    AND wir."PAM_TECHNOTYPE" = wib."PAM_TECHNOTYPE"
+    AND wir."PAM_CLUSTERNAME" = wib."PAM_CLUSTERNAME"
+    AND wir."PAM_LOGINLASTCONNECTION" = wib."PAM_LOGINLASTCONNECTION"
+    AND wir."metier" = wib."metier"
+    AND wir."Account Type" = wib."Account Type"
+    AND wir."productionmanager" = wib."productionmanager"
+    AND wir."dapsproduction ManagerDelegatesname" = wib."dapsproduction ManagerDelegatesname"
+    AND wir."appStatus" = wib."appStatus"
+    AND wir."UID User" = wib."UID User"
+  LEFT JOIN pilothouse.apm_application_daps aad 
+    ON wir."APPLICATION_BAM_VALUE" = aad.goldenapp_auid
+  LEFT JOIN pilothouse.apm_applications aa 
+    ON aa.id = aad.apm_application
+  LEFT JOIN pilothouse.apm_clusters ac 
+    ON aa.apm_cluster = ac.id
+  LEFT JOIN pilothouse.apm_subclusters as2 
+    ON aa.apm_subcluster = as2.id
+  WHERE wir."ImportDate"::date = (SELECT max_import_date FROM latest_date)
+    AND as2."id" IN ($ApmSubCluster)
+    AND wir."ENVIRONMENT Server" IN (${Environment:sqlstring})
+  GROUP BY date_trunc('day', wir."ImportDate"::date), as2."name"
+)
+
+-- Step 3: Combine both
+SELECT * FROM historical_data
+UNION ALL
+SELECT * FROM latest_data
+WHERE "time"::date = ${Date:date}
+ORDER BY "time", "APM SubCluster";
