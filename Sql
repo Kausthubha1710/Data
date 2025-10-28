@@ -1,208 +1,64 @@
-import os
-import xml.etree.ElementTree as ET
-import json
-import argparse
-from collections import OrderedDict
-from datetime import date
+SELECT
+    date_trunc('day', TO_DATE(wir."ImportDate", 'YYYY-MM-DD')) AS "time",
+    as2."name" AS "APM SubCluster",
 
-def load_config(config_file):
-    config = {}
-    collection_configs = {}
-    with open(config_file, 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith('#'):
-                continue
-            if '=' in line:
-                key, value = line.split('=', 1)
-                config[key.strip()] = value.strip()
-            elif ':' in line:
-                key, value = line.split(':', 1)
-                value = value.strip()
-                try:
-                    parts = [v.strip().strip('[]') for v in value.split('],')]
-                    if len(parts) < 3:
-                        print(f"Warning: Insufficient parameters for {key}")
-                        continue
-                    collection_name = parts[0]
-                    attribute_name = parts[1]
-                    attribute_values = [v.strip() for v in parts[2].split(',')]
-                    collection_configs[key.strip()] = {
-                        "collections": [collection_name],
-                        "attribute_names": [attribute_name],
-                        "attribute_values": attribute_values
-                    }
-                except Exception as e:
-                    print(f"Error parsing line: {line} – {e}")
-    return config, collection_configs
+    COUNT(CASE WHEN wib."Status" = 'Pending' THEN wib.id END) AS "PENDING",
+    COUNT(CASE WHEN wib."Status" = 'InProgress' THEN wib.id END) AS "IN_PROGRESS",
+    COUNT(CASE WHEN wib."Status" = 'Blocked' THEN wib.id END) AS "BLOCKED",
+    COUNT(CASE WHEN wib."Status" = 'Completed' THEN wib.id END) AS "COMPLETED"
 
-def parse_xml_file(xml_file, collection_config):
-    try:
-        tree = ET.parse(xml_file)
-        root = tree.getroot()
-        namespace = root.tag.split('}')[0].strip('{')
-        ns_prefix = f'{{{namespace}}}' if namespace else ''
+FROM pilothouse.wwwwwwwasabi_infora02_reporting wir
 
-        collection_element = root.find(f'.//{ns_prefix}{collection_config["collections"][0]}')
-        if collection_element is None:
-            print(f"Collection not found: {collection_config['collections'][0]} in {xml_file}")
-            return None
+FULL JOIN (
+    SELECT *
+    FROM pilothouse.wwwwwwwasabi_infora02_base
+    WHERE TO_DATE("ImportDate", 'YYYY-MM-DD') = (
+        SELECT MAX(TO_DATE("ImportDate", 'YYYY-MM-DD'))
+        FROM pilothouse.wwwwwwwasabi_infora02_reporting
+    )
+) wib
+    ON wir."PAM_LOGINNAME" = wib."PAM_LOGINNAME"
+    AND wir."APPLICATION_BAM_VALUE" = wib."APPLICATION_BAM_VALUE"
+    AND wir."pam_timestamp" = wib."pam_timestamp"
+    AND wir."APPLICATION" = wib."APPLICATION"
+    AND wir."SERVER_ID" = wib."SERVER_ID"
+    AND wir."ENVIRONMENT Server" = wib."ENVIRONMENT Server"
+    AND wir."AREA" = wib."AREA"
+    AND wir."INFRAVERSION" = wib."INFRAVERSION"
+    AND wir."PAMELA_COUNTRY" = wib."PAMELA_COUNTRY"
+    AND wir."PAM_TECHNOTYPE" = wib."PAM_TECHNOTYPE"
+    AND wir."PAM_CLUSTERNAME" = wib."PAM_CLUSTERNAME"
+    AND wir."PAM_LOGINLASTCONNECTION" = wib."PAM_LOGINLASTCONNECTION"
+    AND wir."metier" = wib."metier"
+    AND wir."Account Type" = wib."Account Type"
+    AND wir."productionmanager" = wib."productionmanager"
+    AND wir."dapsproduction ManagerDelegatesname" = wib."dapsproduction ManagerDelegatesname"
+    AND wir."appStatus" = wib."appStatus"
+    AND wir."UID User" = wib."UID User"
 
-        data = []
-        elements = collection_element.findall(f'{ns_prefix}*')
-        attribute_name = collection_config["attribute_names"][0]
-        attribute_values = collection_config["attribute_values"]
+LEFT JOIN pilothouse.apm_application_daps aad
+    ON wir."APPLICATION_BAM_VALUE" = aad.goldenapp_auid
+LEFT JOIN pilothouse.apm_applications aa
+    ON aa.id = aad.apm_application
+LEFT JOIN pilothouse.apm_clusters ac
+    ON aa.apm_cluster = ac.id
+LEFT JOIN pilothouse.apm_subclusters as2
+    ON aa.apm_subcluster = as2.id
 
-        for element in elements:
-            if attribute_name in element.attrib and element.attrib.get(attribute_name) in attribute_values:
-                row = OrderedDict()
-                row['id'] = len(data) + 1
-                for attr in element.attrib:
-                    row[attr] = element.attrib.get(attr, '')
-                row['ImportDate'] = date.today().strftime("%Y-%m-%d")
-                data.append(row)
-        return data
+WHERE
+    wir."PAM LOGINNAME" NOT IN (
+        SELECT wim.account_name
+        FROM pilothouse.wasabi_infraaccounts_metadata wim
+        WHERE wim.infra_type = 'oracle_infra_others'
+    )
+    AND as2."id" IN ($ApmSubCluster)
+    AND TO_DATE(wir."ImportDate", 'YYYY-MM-DD') BETWEEN ($Date) AND ($Date)
+    AND wir."ENVIRONMENT Server" IN ($(Environment:sqlstring))
 
-    except Exception as e:
-        print(f"Error parsing {xml_file}: {e}")
-        return None
+GROUP BY
+    date_trunc('day', TO_DATE(wir."ImportDate", 'YYYY-MM-DD')),
+    as2."name"
 
-def parse_xml_file_metadata(xml_file, collection_config, output_dir, metadata_table_name, table_name):
-    try:
-        tree = ET.parse(xml_file)
-        root = tree.getroot()
-        namespace = root.tag.split('}')[0].strip('{')
-        ns_prefix = f'{{{namespace}}}' if namespace else ''
-
-        collection_element = root.find(f'.//{ns_prefix}{collection_config["collections"][0]}')
-        if collection_element is None:
-            print(f"Collection not found: {collection_config['collections'][0]} in {xml_file}")
-            return None
-
-        elements = collection_element.findall(f'{ns_prefix}*')
-        attribute_name = collection_config["attribute_names"][0]
-        attribute_values = collection_config["attribute_values"]
-
-        json_file_path = os.path.join(output_dir, f'{table_name}.json')
-        metadata_json_file_path = os.path.join(output_dir, f'{metadata_table_name}.json')
-
-        try:
-            with open(json_file_path, 'r', encoding='utf-8') as f:
-                main_data = json.load(f)
-        except FileNotFoundError:
-            main_data = []
-
-        try:
-            with open(metadata_json_file_path, 'r', encoding='utf-8') as f:
-                existing_metadata = json.load(f)
-            last_id = max(item['id'] for item in existing_metadata) if existing_metadata else 0
-        except FileNotFoundError:
-            existing_metadata = []
-            last_id = 0
-
-        safe_id_map = {}
-        next_safe_id = 1
-        for row in main_data:
-            key = (row['id'], row.get('SafeName', '').lower())
-            if key not in safe_id_map:
-                safe_id_map[key] = next_safe_id
-                next_safe_id += 1
-
-        metadata_data = []
-        for element in elements:
-            if attribute_name in element.attrib and element.attrib.get(attribute_name) in attribute_values:
-                metadata_row = OrderedDict()
-                safe_name = next((element.attrib.get(k, '') for k in element.attrib if k.lower() == 'safename'), '')
-                metadata_row['id'] = last_id + 1
-                key = (metadata_row['id'], safe_name.lower())
-                if key not in safe_id_map:
-                    safe_id_map[key] = next_safe_id
-                    next_safe_id += 1
-                metadata_row['SafeId'] = safe_id_map[key]
-                metadata_row['SafeName'] = safe_name
-                metadata_row['present_on'] = date.today().strftime("%Y-%m-%d")
-                metadata_data.append(metadata_row)
-                last_id += 1
-        return metadata_data
-
-    except Exception as e:
-        print(f"Error parsing metadata from {xml_file}: {e}")
-        return None
-
-def write_data_to_json(data, output_filename):
-    if data:
-        with open(output_filename, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=4)
-        print(f"Data written to {output_filename}")
-    else:
-        print("No data to write.")
-
-def load_metadata_json(json_file_path):
-    try:
-        with open(json_file_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return []
-
-def update_metadata_json(metadata_data, json_file_path):
-    existing_metadata = load_metadata_json(json_file_path)
-    combined_metadata = existing_metadata + metadata_data
-    with open(json_file_path, 'w', encoding='utf-8') as f:
-        json.dump(combined_metadata, f, indent=4)
-    print(f"Metadata updated in {json_file_path}")
-
-def process_main_table(xml_dir, output_dir, collection_configs):
-    for root, _, files in os.walk(xml_dir):
-        for filename in files:
-            if filename.endswith('.xml'):
-                suffix = os.path.splitext(filename)[0].split('-')[-1].strip()
-                table_name = f'pam_cyberarck_{suffix}'
-                xml_file_path = os.path.join(root, filename)
-                json_file_path = os.path.join(output_dir, f'{table_name}.json')
-                collection_config = collection_configs.get(suffix)
-                if not collection_config:
-                    print(f"No config for file {filename}")
-                    continue
-                data = parse_xml_file(xml_file_path, collection_config)
-                if data:
-                    write_data_to_json(data, json_file_path)
-
-def process_metadata_table(xml_dir, output_dir, collection_configs):
-    for root, _, files in os.walk(xml_dir):
-        for filename in files:
-            if filename.endswith('.xml'):
-                suffix = os.path.splitext(filename)[0].split('-')[-1].strip()
-                table_name = f'pam_cyberarck_{suffix}'
-                metadata_table_name = f'pam_cyberarck_metadata_{suffix}'
-                xml_file_path = os.path.join(root, filename)
-                metadata_json_file_path = os.path.join(output_dir, f'{metadata_table_name}.json')
-                collection_config = collection_configs.get(suffix)
-                if not collection_config:
-                    print(f"No config for file {filename}")
-                    continue
-                metadata_data = parse_xml_file_metadata(xml_file_path, collection_config, output_dir, metadata_table_name, table_name)
-                if metadata_data:
-                    update_metadata_json(metadata_data, metadata_json_file_path)
-
-def main():
-    parser = argparse.ArgumentParser(description='Process XML files.')
-    parser.add_argument('--table', choices=['main', 'metadata'], required=True)
-    args = parser.parse_args()
-
-    config, collection_configs = load_config('config.txt')
-    xml_dir = config.get('xml_dir')
-    output_dir = config.get('output_dir')
-
-    if not xml_dir or not output_dir:
-        print("Missing xml_dir or output_dir in config.txt")
-        return
-
-    os.makedirs(output_dir, exist_ok=True)
-
-    if args.table == 'main':
-        process_main_table(xml_dir, output_dir, collection_configs)
-    elif args.table == 'metadata':
-        process_metadata_table(xml_dir, output_dir, collection_configs)
-
-if __name__ == "__main__":
-    main()
+ORDER BY
+    date_trunc('day', TO_DATE(wir."ImportDate", 'YYYY-MM-DD')),
+    as2."name";
