@@ -1,6 +1,23 @@
+import psycopg2
+from datetime import datetime
+
+# === Database connection configuration ===
+DB_CONFIG = {
+    "host": "your_host_name",
+    "port": "5432",
+    "database": "your_database_name",
+    "user": "your_username",
+    "password": "your_password"
+}
+
+# === SQL query to update reporting table ===
+UPDATE_QUERY = """
 UPDATE pilothouse.wwwwwwwasabi_infora02_reporting AS r
 SET
-    "Status" = COALESCE(b."Status", r."Status")
+    "Status" = COALESCE(b."Status", r."Status"),
+    "Action" = COALESCE(b."Action", r."Action"),
+    "Assignee" = COALESCE(b."Assignee", r."Assignee"),
+    "Remediation" = COALESCE(b."Remediation", r."Remediation")
 FROM pilothouse.wwwwwwwasabi_infora02_base AS b
 WHERE
     r."pam_timestamp" = b."pam_timestamp"
@@ -18,7 +35,7 @@ WHERE
     AND r."Account_Type" = b."Account_Type"
     AND r."productionmanager" = b."productionmanager"
     AND r."PAM_LOGINLASTCONNECTION" = b."PAM_LOGINLASTCONNECTION"
-    AND r."dapsproductionManagerDelegatesname" = b."ManagerDelegatesname"
+    AND r."dapsproductionManagerDelegatesname" IS NOT DISTINCT FROM b."dapsproductionManagerDelegatesname"
     AND r."appStatus" = b."appStatus"
     AND r."UID_User" = b."UID_User"
     AND r."Assignee" = b."Assignee"
@@ -27,28 +44,44 @@ WHERE
     AND r."Comments" = b."Comments"
     AND r."ImportDate" = (
         SELECT MAX("ImportDate")
-        FROM pilothouse.wwwwwwwasabi_infora02_reporting AS r2
-        WHERE
-            r2."pam_timestamp" = b."pam_timestamp"
-            AND r2."APPLICATION_BAM_VALUE" = b."APPLICATION_BAM_VALUE"
-            AND r2."APPLICATION" = b."APPLICATION"
-            AND r2."SERVER_ID" = b."SERVER_ID"
-            AND r2."ENVIRONMENT_Server" = b."ENVIRONMENT_Server"
-            AND r2."AREA" = b."AREA"
-            AND r2."INFRAVERSION" = b."INFRAVERSION"
-            AND r2."PAMELA__COUNTRY" = b."PAMELA__COUNTRY"
-            AND r2."PAM_TECHNOTYPE" = b."PAM_TECHNOTYPE"
-            AND r2."PAM_CLUSTERNAME" = b."PAM_CLUSTERNAME"
-            AND r2."metier" = b."metier"
-            AND r2."PAM_LOGINNAME" = b."PAM_LOGINNAME"
-            AND r2."Account_Type" = b."Account_Type"
-            AND r2."productionmanager" = b."productionmanager"
-            AND r2."PAM_LOGINLASTCONNECTION" = b."PAM_LOGINLASTCONNECTION"
-            AND r2."dapsproductionManagerDelegatesname" = b."ManagerDelegatesname"
-            AND r2."appStatus" = b."appStatus"
-            AND r2."UID_User" = b."UID_User"
-            AND r2."Assignee" = b."Assignee"
-            AND r2."Action" = b."Action"
-            AND r2."Remediation" = b."Remediation"
-            AND r2."Comments" = b."Comments"
+        FROM pilothouse.wwwwwwwasabi_infora02_reporting
     );
+"""
+
+# === Run the update ===
+def run_update():
+    connection = None
+    try:
+        connection = psycopg2.connect(**DB_CONFIG)
+        connection.autocommit = False
+        cursor = connection.cursor()
+
+        print(f"[{datetime.now()}] Running update query...")
+
+        cursor.execute(UPDATE_QUERY)
+        updated_rows = cursor.rowcount
+
+        connection.commit()
+        print(f"[{datetime.now()}] ✅ Update completed successfully.")
+        print(f"Rows updated: {updated_rows}")
+
+        # Optional: log results to a file
+        with open("update_log.txt", "a") as log_file:
+            log_file.write(f"{datetime.now()} - Updated rows: {updated_rows}\n")
+
+    except Exception as e:
+        if connection:
+            connection.rollback()
+        print(f"[{datetime.now()}] ❌ Error occurred: {e}")
+        with open("update_log.txt", "a") as log_file:
+            log_file.write(f"{datetime.now()} - ERROR: {e}\n")
+
+    finally:
+        if connection:
+            cursor.close()
+            connection.close()
+            print(f"[{datetime.now()}] Connection closed.")
+
+
+if __name__ == "__main__":
+    run_update()
