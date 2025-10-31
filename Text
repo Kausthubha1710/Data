@@ -85,3 +85,88 @@ def run_update():
 
 if __name__ == "__main__":
     run_update()
+
+
+
+
+
+
+
+
+INSERT INTO pilothouse.wwwwwwwasabi_infora02_base AS b (
+    "id",
+    "pam_timestamp",
+    "APPLICATION_BAM_VALUE",
+    "APPLICATION",
+    "SERVER_ID",
+    "ENVIRONMENT_Server",
+    "AREA",
+    "INFRAVERSION",
+    "PAMELA__COUNTRY",
+    "PAM_TECHNOTYPE",
+    "PAM_CLUSTERNAME",
+    "metier",
+    "PAM_LOGINNAME",
+    "Account_Type",
+    "productionmanager",
+    "PAM_LOGINLASTCONNECTION",
+    "dapsproductionManagerDelegatesname",
+    "appStatus",
+    "UID_User",
+    "Assignee",
+    "Action",
+    "Remediation",
+    "Comments",
+    "Status",
+    "ImportDate"
+)
+SELECT
+    r."id",
+    r."pam_timestamp",
+    r."APPLICATION_BAM_VALUE",
+    r."APPLICATION",
+    r."SERVER_ID",
+    r."ENVIRONMENT_Server",
+    r."AREA",
+    r."INFRAVERSION",
+    r."PAMELA__COUNTRY",
+    r."PAM_TECHNOTYPE",
+    r."PAM_CLUSTERNAME",
+    r."metier",
+    r."PAM_LOGINNAME",
+    r."Account_Type",
+    r."productionmanager",
+    r."PAM_LOGINLASTCONNECTION",
+    r."dapsproductionManagerDelegatesname",
+    r."appStatus",
+    r."UID_User",
+    r."Assignee",
+    r."Action",
+    r."Remediation",
+    r."Comments",
+    r."Status",
+    r."ImportDate"
+FROM pilothouse.wwwwwwwasabi_infora02_reporting AS r
+WHERE
+    r."ImportDate"::date = CURRENT_DATE
+    AND NOT EXISTS (
+        SELECT 1
+        FROM pilothouse.wwwwwwwasabi_infora02_base AS b
+        WHERE
+            b."pam_timestamp" = r."pam_timestamp"
+            AND b."APPLICATION_BAM_VALUE" = r."APPLICATION_BAM_VALUE"
+            AND b."APPLICATION" = r."APPLICATION"
+            AND b."SERVER_ID" = r."SERVER_ID"
+            AND b."ENVIRONMENT_Server" = r."ENVIRONMENT_Server"
+            AND b."AREA" = r."AREA"
+            AND b."INFRAVERSION" = r."INFRAVERSION"
+            AND b."PAMELA__COUNTRY" = r."PAMELA__COUNTRY"
+            AND b."PAM_TECHNOTYPE" = r."PAM_TECHNOTYPE"
+            AND b."PAM_CLUSTERNAME" = r."PAM_CLUSTERNAME"
+            AND b."metier" = r."metier"
+            AND b."PAM_LOGINNAME" = r."PAM_LOGINNAME"
+            AND b."Account_Type" = r."Account_Type"
+            AND b."productionmanager" = r."productionmanager"
+            AND b."PAM_LOGINLASTCONNECTION" = r."PAM_LOGINLASTCONNECTION"
+            AND b."UID_User" = r."UID_User"
+    );
