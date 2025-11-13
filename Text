@@ -1,87 +1,97 @@
-UPDATE_QUERY = """
--- Step 1: Update existing rows in reporting table from base table
-UPDATE pilothouse.wwwwwwwasabi_infora02_reporting AS r
-SET
-    "Status" = COALESCE(b."Status", r."Status"),
-    "Action" = COALESCE(b."Action", r."Action"),
-    "Assignee" = COALESCE(b."Assignee", r."Assignee"),
-    "Remediation" = COALESCE(b."Remediation", r."Remediation")
-FROM pilothouse.wwwwwwwasabi_infora02_base AS b
-WHERE
-    r."pam_timestamp" = b."pam_timestamp"
-    AND r."APPLICATION_BAM_VALUE" = b."APPLICATION_BAM_VALUE"
-    AND r."APPLICATION" = b."APPLICATION"
-    AND r."SERVER_ID" = b."SERVER_ID"
-    AND r."ENVIRONMENT_Server" = b."ENVIRONMENT_Server"
-    AND r."AREA" = b."AREA"
-    AND r."INFRAVERSION" = b."INFRAVERSION"
-    AND r."PAMELA__COUNTRY" = b."PAMELA__COUNTRY"
-    AND r."PAM_TECHNOTYPE" = b."PAM_TECHNOTYPE"
-    AND r."PAM_CLUSTERNAME" = b."PAM_CLUSTERNAME"
-    AND r."metier" = b."metier"
-    AND r."PAM_LOGINNAME" = b."PAM_LOGINNAME"
-    AND r."Account_Type" = b."Account_Type"
-    AND r."productionmanager" = b."productionmanager"
-    AND r."PAM_LOGINLASTCONNECTION" = b."PAM_LOGINLASTCONNECTION"
-    AND r."dapsproductionManagerDelegatesname" IS NOT DISTINCT FROM b."dapsproductionManagerDelegatesname"
-    AND r."appStatus" = b."appStatus"
-    AND r."UID_User" = b."UID_User"
-    AND r."Assignee" = b."Assignee"
-    AND r."Action" = b."Action"
-    AND r."Remediation" = b."Remediation"
-    AND r."Comments" = b."Comments"
-    AND r."ImportDate" = (
-        SELECT MAX("ImportDate")
-        FROM pilothouse.wwwwwwwasabi_infora02_reporting
-    );
+def extraVars = ""
 
--- Step 2: Insert new rows from reporting (latest ImportDate) into base table
-INSERT INTO pilothouse.wwwwwwwasabi_infora02_base (
-    id, "pam_timestamp", "APPLICATION_BAM_VALUE", "APPLICATION", "SERVER_ID",
-    "ENVIRONMENT_Server", "AREA", "INFRAVERSION", "PAMELA__COUNTRY",
-    "PAM_TECHNOTYPE", "PAM_CLUSTERNAME", "metier", "PAM_LOGINNAME",
-    "Account_Type", "productionmanager", "PAM_LOGINLASTCONNECTION",
-    "dapsproductionManagerDelegatesname", "appStatus", "UID_User",
-    "Assignee", "Action", "Remediation", "Comments", "Status", "ImportDate"
-)
-SELECT
-    r.id, r."pam_timestamp", r."APPLICATION_BAM_VALUE", r."APPLICATION", r."SERVER_ID",
-    r."ENVIRONMENT_Server", r."AREA", r."INFRAVERSION", r."PAMELA__COUNTRY",
-    r."PAM_TECHNOTYPE", r."PAM_CLUSTERNAME", r."metier", r."PAM_LOGINNAME",
-    r."Account_Type", r."productionmanager", r."PAM_LOGINLASTCONNECTION",
-    r."dapsproductionManagerDelegatesname", r."appStatus", r."UID_User",
-    r."Assignee", r."Action", r."Remediation", r."Comments", r."Status", r."ImportDate"
-FROM pilothouse.wwwwwwwasabi_infora02_reporting AS r
-WHERE
-    r."ImportDate" = (
-        SELECT MAX("ImportDate")
-        FROM pilothouse.wwwwwwwasabi_infora02_reporting
-    )
-    AND NOT EXISTS (
-        SELECT 1
-        FROM pilothouse.wwwwwwwasabi_infora02_base AS b
-        WHERE
-            r."pam_timestamp" = b."pam_timestamp"
-            AND r."APPLICATION_BAM_VALUE" = b."APPLICATION_BAM_VALUE"
-            AND r."APPLICATION" = b."APPLICATION"
-            AND r."SERVER_ID" = b."SERVER_ID"
-            AND r."ENVIRONMENT_Server" = b."ENVIRONMENT_Server"
-            AND r."AREA" = b."AREA"
-            AND r."INFRAVERSION" = b."INFRAVERSION"
-            AND r."PAMELA__COUNTRY" = b."PAMELA__COUNTRY"
-            AND r."PAM_TECHNOTYPE" = b."PAM_TECHNOTYPE"
-            AND r."PAM_CLUSTERNAME" = b."PAM_CLUSTERNAME"
-            AND r."metier" = b."metier"
-            AND r."PAM_LOGINNAME" = b."PAM_LOGINNAME"
-            AND r."Account_Type" = b."Account_Type"
-            AND r."productionmanager" = b."productionmanager"
-            AND r."PAM_LOGINLASTCONNECTION" = b."PAM_LOGINLASTCONNECTION"
-            AND r."dapsproductionManagerDelegatesname" IS NOT DISTINCT FROM b."dapsproductionManagerDelegatesname"
-            AND r."appStatus" = b."appStatus"
-            AND r."UID_User" = b."UID_User"
-            AND r."Assignee" = b."Assignee"
-            AND r."Action" = b."Action"
-            AND r."Remediation" = b."Remediation"
-            AND r."Comments" = b."Comments"
-    );
-"""
+pipeline {
+    agent { label "bnpp-deploytools" }
+
+    environment {
+        artifactoryCred = "cibdbdbce-artifactory-credentials"
+    }
+
+    stages {
+
+        stage('Initialize') {
+            steps {
+                script {
+                    initializeParameters()
+                    def buildNo = currentBuild.displayName
+                    currentBuild.displayName += " >> ${params.report}"
+                }
+            }
+        }
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Copy XMLs from OneDrive') {
+            steps {
+                bat '''
+                    echo === Copying XML files from OneDrive ===
+                    if not exist "%WORKSPACE%\\xml_files" mkdir "%WORKSPACE%\\xml_files"
+                    xcopy "C:\\Users\\h59281\\OneDrive - BNP Paribas\\xml_files\\*" "%WORKSPACE%\\xml_files\\" /E /Y
+                    echo === XML copy complete ===
+                '''
+            }
+        }
+
+        stage('Config file copy to workspace') {
+            steps {
+                script {
+                    configFileProvider([configFile(fileId: "credential-wasabi", variable: 'yars_file')]) {
+                        sh 'echo ### Config File Copy ###'
+                    }
+                }
+            }
+        }
+
+        stage('Create PIP config file') {
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: artifactoryCred,
+                                                     usernameVariable: 'ARTIFACTORY_USERNAME',
+                                                     passwordVariable: 'ARTIFACTORY_PASSWORD')]) {
+                        bat '''
+                            echo [global] > %USERPROFILE%\\.pip\\pip.conf
+                            echo index-url=https://%ARTIFACTORY_USERNAME%:%ARTIFACTORY_PASSWORD%@artifactory.cib.echonet/artifactory/api/pypi/pypi/simple >> %USERPROFILE%\\.pip\\pip.conf
+                            echo === PIP config created ===
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Execute Python Script') {
+            steps {
+                bat '''
+                    pip install -r requirements.txt
+                    python main.py --table "%report%"
+                '''
+            }
+        }
+    }
+}
+
+def getChoices() {
+    return ['sync', 'reporting', 'both', 'base']
+}
+
+def initializeParameters() {
+    def parameterList = [
+        choice(name: 'report',
+               choices: getChoices(),
+               description: 'Please select the Target Environment')
+    ]
+
+    properties([
+        buildDiscarder(logRotator(
+            artifactDaysToKeepStr: '7',
+            artifactNumToKeepStr: '5',
+            daysToKeepStr: '7',
+            numToKeepStr: '5'
+        )),
+        durabilityHint('PERFORMANCE_OPTIMIZED'),
+        parameters(parameterList)
+    ])
+}
