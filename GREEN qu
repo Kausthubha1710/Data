@@ -1,104 +1,51 @@
-WITH latest_dates AS (
-    SELECT
+WITH weekly_latest AS (
+    SELECT 
         b."AppName",
         DATE_TRUNC('week', b."ImportDate"::date) AS week_start,
         MAX(b."ImportDate"::date) AS latest_date
     FROM pilothouse_admin.wasabi_bg01_reporting b
-    GROUP BY
+    GROUP BY 
         b."AppName",
         DATE_TRUNC('week', b."ImportDate"::date)
+),
+filtered_data AS (
+    SELECT b.*
+    FROM pilothouse_admin.wasabi_bg01_reporting b
+    JOIN weekly_latest wl
+      ON wl."AppName" = b."AppName"
+     AND DATE_TRUNC('week', b."ImportDate"::date) = wl.week_start
+     AND b."ImportDate"::date = wl.latest_date
 )
 
-SELECT
+SELECT  
     COALESCE(a."it sub cluster", 'Unknown SubCluster') AS "SubClusterName",
     a."application" AS "ApplicationName",
 
-    /* ---------- WEEK 3 ---------- */
-    (SELECT ld.latest_date
-     FROM latest_dates ld
-     WHERE ld."AppName" = a."application"
-       AND ld.week_start = DATE_TRUNC('week', (CURRENT_DATE - INTERVAL '3 week')::date)
-     LIMIT 1) AS "Week_3_Date",
+    COUNT(CASE WHEN DATE_TRUNC('week', b."ImportDate"::date) =
+                     DATE_TRUNC('week', (CURRENT_DATE - INTERVAL '3 week')::date)
+         THEN 1 END) AS "Week -3",
 
-    COUNT(CASE 
-            WHEN DATE_TRUNC('week', b."ImportDate"::date) =
-                 DATE_TRUNC('week', (CURRENT_DATE - INTERVAL '3 week')::date)
-             AND b."ImportDate"::date =
-                 (SELECT ld.latest_date
-                  FROM latest_dates ld
-                  WHERE ld."AppName" = b."AppName"
-                    AND ld.week_start = DATE_TRUNC('week', (CURRENT_DATE - INTERVAL '3 week')::date)
-                  LIMIT 1)
-        THEN 1 END) AS "Week_3_Count",
+    COUNT(CASE WHEN DATE_TRUNC('week', b."ImportDate"::date) =
+                     DATE_TRUNC('week', (CURRENT_DATE - INTERVAL '2 week')::date)
+         THEN 1 END) AS "Week -2",
 
-    /* ---------- WEEK 2 ---------- */
-    (SELECT ld.latest_date
-     FROM latest_dates ld
-     WHERE ld."AppName" = a."application"
-       AND ld.week_start = DATE_TRUNC('week', (CURRENT_DATE - INTERVAL '2 week')::date)
-     LIMIT 1) AS "Week_2_Date",
+    COUNT(CASE WHEN DATE_TRUNC('week', b."ImportDate"::date) =
+                     DATE_TRUNC('week', (CURRENT_DATE - INTERVAL '1 week')::date)
+         THEN 1 END) AS "Week -1",
 
-    COUNT(CASE 
-            WHEN DATE_TRUNC('week', b."ImportDate"::date) =
-                 DATE_TRUNC('week', (CURRENT_DATE - INTERVAL '2 week')::date)
-             AND b."ImportDate"::date =
-                 (SELECT ld.latest_date
-                  FROM latest_dates ld
-                  WHERE ld."AppName" = b."AppName"
-                    AND ld.week_start = DATE_TRUNC('week', (CURRENT_DATE - INTERVAL '2 week')::date)
-                  LIMIT 1)
-        THEN 1 END) AS "Week_2_Count",
-
-    /* ---------- WEEK 1 ---------- */
-    (SELECT ld.latest_date
-     FROM latest_dates ld
-     WHERE ld."AppName" = a."application"
-       AND ld.week_start = DATE_TRUNC('week', (CURRENT_DATE - INTERVAL '1 week')::date)
-     LIMIT 1) AS "Week_1_Date",
-
-    COUNT(CASE 
-            WHEN DATE_TRUNC('week', b."ImportDate"::date) =
-                 DATE_TRUNC('week', (CURRENT_DATE - INTERVAL '1 week')::date)
-             AND b."ImportDate"::date =
-                 (SELECT ld.latest_date
-                  FROM latest_dates ld
-                  WHERE ld."AppName" = b."AppName"
-                    AND ld.week_start = DATE_TRUNC('week', (CURRENT_DATE - INTERVAL '1 week')::date)
-                  LIMIT 1)
-        THEN 1 END) AS "Week_1_Count",
-
-    /* ---------- CURRENT WEEK ---------- */
-    (SELECT ld.latest_date
-     FROM latest_dates ld
-     WHERE ld."AppName" = a."application"
-       AND ld.week_start = DATE_TRUNC('week', CURRENT_DATE::date)
-     LIMIT 1) AS "Current_Week_Date",
-
-    COUNT(CASE 
-            WHEN DATE_TRUNC('week', b."ImportDate"::date) =
-                 DATE_TRUNC('week', CURRENT_DATE::date)
-             AND b."ImportDate"::date =
-                 (SELECT ld.latest_date
-                  FROM latest_dates ld
-                  WHERE ld."AppName" = b."AppName"
-                    AND ld.week_start = DATE_TRUNC('week', CURRENT_DATE::date)
-                  LIMIT 1)
-        THEN 1 END) AS "Current_Week_Count",
+    COUNT(CASE WHEN DATE_TRUNC('week', b."ImportDate"::date) =
+                     DATE_TRUNC('week', CURRENT_DATE::date)
+         THEN 1 END) AS "Current Week",
 
     COUNT(*) AS "Total"
 
-FROM pilothouse_admin.wasabi_bg01_reporting b
-LEFT JOIN pilothouse_admin.wasabi_get_apmsubcluster a
-    ON a."application" = b."AppName"
-LEFT JOIN pilothouse_admin.wasabi_get_env e
-    ON e."account name" = b."AccountName"
+FROM filtered_data b
+LEFT JOIN pilothouse_admin.wasabi_get_apmsubcluster a 
+       ON a."application" = b."AppName"
+LEFT JOIN pilothouse_admin.wasabi_get_eonye e 
+       ON e."account name" = b."AccountName"
 
 WHERE a."it sub cluster" IN ($ApmSubCluster)
 
-GROUP BY
-    a."it sub cluster",
-    a."application"
-
-ORDER BY
-    a."it sub cluster",
-    "Total" DESC;
+GROUP BY a."it sub cluster", a."application"
+ORDER BY a."it sub cluster", "Total" DESC;
