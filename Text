@@ -1,97 +1,27 @@
-def extraVars = ""
+def process_metadata_table(self, config_name):
+    recent_files = self.get_most_recent_file(config_name)
 
-pipeline {
-    agent { label "bnpp-deploytools" }
+    if recent_files is None:
+        print(f"No XML file found for {config_name}")
+        return
 
-    environment {
-        artifactoryCred = "cibdbdbce-artifactory-credentials"
-    }
+    file_path, timestamp = recent_files
 
-    stages {
+    print(f"Processing metadata table: {file_path}")
 
-        stage('Initialize') {
-            steps {
-                script {
-                    initializeParameters()
-                    def buildNo = currentBuild.displayName
-                    currentBuild.displayName += " >> ${params.report}"
-                }
-            }
-        }
+    xml_parser = XmlParser(file_path, self.collection_configs[config_name], config_name)
+    rows = xml_parser.parse_xml_file_metadata()
 
-        stage('Checkout') {
-            steps {
-                checkout scm
-            }
-        }
+    if not rows:
+        print(f"No metadata rows extracted from {file_path}")
+        return
 
-        stage('Copy XMLs from OneDrive') {
-            steps {
-                bat '''
-                    echo === Copying XML files from OneDrive ===
-                    if not exist "%WORKSPACE%\\xml_files" mkdir "%WORKSPACE%\\xml_files"
-                    xcopy "C:\\Users\\h59281\\OneDrive - BNP Paribas\\xml_files\\*" "%WORKSPACE%\\xml_files\\" /E /Y
-                    echo === XML copy complete ===
-                '''
-            }
-        }
+    table_name = f"wasabi_{config_name.lower()}_reporting"
 
-        stage('Config file copy to workspace') {
-            steps {
-                script {
-                    configFileProvider([configFile(fileId: "credential-wasabi", variable: 'yars_file')]) {
-                        sh 'echo ### Config File Copy ###'
-                    }
-                }
-            }
-        }
+    self.db_manager.ensure_table(table_name, rows[0])
+    today = date.today().strftime("%Y-%m-%d")
 
-        stage('Create PIP config file') {
-            steps {
-                script {
-                    withCredentials([usernamePassword(credentialsId: artifactoryCred,
-                                                     usernameVariable: 'ARTIFACTORY_USERNAME',
-                                                     passwordVariable: 'ARTIFACTORY_PASSWORD')]) {
-                        bat '''
-                            echo [global] > %USERPROFILE%\\.pip\\pip.conf
-                            echo index-url=https://%ARTIFACTORY_USERNAME%:%ARTIFACTORY_PASSWORD%@artifactory.cib.echonet/artifactory/api/pypi/pypi/simple >> %USERPROFILE%\\.pip\\pip.conf
-                            echo === PIP config created ===
-                        '''
-                    }
-                }
-            }
-        }
+    self.db_manager.delete_rows_by_date(table_name, today)
+    self.db_manager.insert_rows(table_name, rows)
 
-        stage('Execute Python Script') {
-            steps {
-                bat '''
-                    pip install -r requirements.txt
-                    python main.py --table "%report%"
-                '''
-            }
-        }
-    }
-}
-
-def getChoices() {
-    return ['sync', 'reporting', 'both', 'base']
-}
-
-def initializeParameters() {
-    def parameterList = [
-        choice(name: 'report',
-               choices: getChoices(),
-               description: 'Please select the Target Environment')
-    ]
-
-    properties([
-        buildDiscarder(logRotator(
-            artifactDaysToKeepStr: '7',
-            artifactNumToKeepStr: '5',
-            daysToKeepStr: '7',
-            numToKeepStr: '5'
-        )),
-        durabilityHint('PERFORMANCE_OPTIMIZED'),
-        parameters(parameterList)
-    ])
-}
+    print(f"Inserted {len(rows)} rows into {table_name}")
