@@ -1,3 +1,25 @@
+def process_main_table(self):
+    recent_files = self.get_most_recent_files()
+
+    for config_name, (file_path, timestamp) in recent_files.items():
+
+        print(f"Processing MAIN table file {os.path.basename(file_path)} using config {config_name}")
+
+        xml_parser = XmlParser(file_path, self.collection_configs[config_name], config_name)
+        data = xml_parser.parse_xml_file()
+
+        if data:
+            table_name = f"wasabi_{config_name.replace(' ', '_').lower()}_base"
+            self.db_manager.ensure_table(table_name, data[0])
+            self.db_manager.delete_existing_data(table_name)
+            self.db_manager.insert_rows(table_name, data)
+
+            print(f"Inserted {len(data)} rows into {table_name}")
+        else:
+            print(f"[INFO] No rows extracted from {file_path}")
+
+
+
 def process_metadata_table(self, config_name):
     recent_files = self.get_most_recent_file(config_name)
 
@@ -25,3 +47,77 @@ def process_metadata_table(self, config_name):
     self.db_manager.insert_rows(table_name, rows)
 
     print(f"Inserted {len(rows)} rows into {table_name}")
+
+
+def get_most_recent_files(self):
+    recent_files = {}
+
+    for root, dirs, files in os.walk(self.xml_dir):
+        for file in files:
+            if not file.lower().endswith(".xml"):
+                continue
+
+            basename = os.path.splitext(file)[0]
+
+            base_name = self.strip_known_prefixes(basename)
+
+            config_name = self.config_name_from_filename(base_name)
+
+            if config_name is None:
+                print("Skipping…")
+                continue
+
+            full_path = os.path.join(root, file)
+            timestamp = os.path.getctime(full_path)
+
+            if config_name not in recent_files or timestamp > recent_files[config_name][1]:
+                recent_files[config_name] = (full_path, timestamp)
+
+    return recent_files
+
+
+
+
+import argparse
+
+from config_loader import load_config
+from table_processor import TableProcessor
+from db_manager import DBManager
+from data_synchronizer import run_updates
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Process XML files.')
+    parser.add_argument('--table', choices=['base', 'reporting', 'sync'], required=True)
+    parser.add_argument('--config', required=True, help="Config name like INFORA02, INFSQL03 etc.")
+    args = parser.parse_args()
+
+    config, collection_configs = load_config('config.txt')
+
+    xml_dir = config.get('xml_dir')
+    if not xml_dir:
+        print("Missing xml_dir in config.txt")
+        return
+
+    if args.config not in collection_configs:
+        print(f"[ERROR] Config '{args.config}' not found in config.txt")
+        return
+
+    db_manager = DBManager()
+    table_processor = TableProcessor(xml_dir, collection_configs, db_manager)
+
+    # ---- Now process only the specific config ----
+    if args.table == 'base':
+        table_processor.process_main_table(args.config)
+
+    elif args.table == 'reporting':
+        table_processor.process_metadata_table(args.config)
+
+    elif args.table == 'sync':
+        run_updates()
+
+    db_manager.close()
+
+
+if __name__ == "__main__":
+    main()
