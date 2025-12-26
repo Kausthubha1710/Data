@@ -1,51 +1,28 @@
 WITH weekly_latest AS (
-    SELECT 
+    SELECT
         b."AppName",
         DATE_TRUNC('week', b."ImportDate"::date) AS week_start,
         MAX(b."ImportDate"::date) AS latest_date
     FROM pilothouse_admin.wasabi_bg01_reporting b
-    GROUP BY 
-        b."AppName",
-        DATE_TRUNC('week', b."ImportDate"::date)
+    GROUP BY 1, 2
 ),
 filtered_data AS (
     SELECT b.*
     FROM pilothouse_admin.wasabi_bg01_reporting b
-    JOIN weekly_latest wl
-      ON wl."AppName" = b."AppName"
-     AND DATE_TRUNC('week', b."ImportDate"::date) = wl.week_start
-     AND b."ImportDate"::date = wl.latest_date
+    JOIN weekly_latest wl 
+      ON wl."AppName" = b."AppName" 
+      AND DATE_TRUNC('week', b."ImportDate"::date) = wl.week_start
+      AND b."ImportDate"::date = wl.latest_date
 )
-
-SELECT  
-    COALESCE(a."it sub cluster", 'Unknown SubCluster') AS "SubClusterName",
+SELECT
+    -- This "WeekDate" will become your dynamic column header
+    DATE_TRUNC('week', b."ImportDate"::date)::date AS "WeekDate", 
+    COALESCE(a."it_sub_cluster", 'Unknown SubCluster') AS "SubClusterName", 
     a."application" AS "ApplicationName",
-
-    COUNT(CASE WHEN DATE_TRUNC('week', b."ImportDate"::date) =
-                     DATE_TRUNC('week', (CURRENT_DATE - INTERVAL '3 week')::date)
-         THEN 1 END) AS "Week -3",
-
-    COUNT(CASE WHEN DATE_TRUNC('week', b."ImportDate"::date) =
-                     DATE_TRUNC('week', (CURRENT_DATE - INTERVAL '2 week')::date)
-         THEN 1 END) AS "Week -2",
-
-    COUNT(CASE WHEN DATE_TRUNC('week', b."ImportDate"::date) =
-                     DATE_TRUNC('week', (CURRENT_DATE - INTERVAL '1 week')::date)
-         THEN 1 END) AS "Week -1",
-
-    COUNT(CASE WHEN DATE_TRUNC('week', b."ImportDate"::date) =
-                     DATE_TRUNC('week', CURRENT_DATE::date)
-         THEN 1 END) AS "Current Week",
-
-    COUNT(*) AS "Total"
-
+    COUNT(*) AS "TotalCount"
 FROM filtered_data b
-LEFT JOIN pilothouse_admin.wasabi_get_apmsubcluster a 
-       ON a."application" = b."AppName"
-LEFT JOIN pilothouse_admin.wasabi_get_eonye e 
-       ON e."account name" = b."AccountName"
-
-WHERE a."it sub cluster" IN ($ApmSubCluster)
-
-GROUP BY a."it sub cluster", a."application"
-ORDER BY a."it sub cluster", "Total" DESC;
+LEFT JOIN pilothouse_admin.wasabi_get_apmsubcluster a ON a."application" = b."AppName"
+WHERE a."it_sub_cluster" IN ($ApmSubCluster)
+  AND b."ImportDate" >= CURRENT_DATE - INTERVAL '4 weeks'
+GROUP BY 1, 2, 3
+ORDER BY "WeekDate" DESC;
