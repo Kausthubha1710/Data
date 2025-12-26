@@ -1,30 +1,96 @@
-WITH base AS (
-    SELECT
-        b."AppName",
-        DATE_TRUNC('week', b."ImportDate"::date) AS week_start
-    FROM pilothouse_admin.wasabi_bg01_reporting b
-),
-latest AS (
-    SELECT MAX(week_start) AS latest_week FROM base
-)
-SELECT
-    COALESCE(a."it_sub_cluster", 'Unknown SubCluster') AS "SubCluster",
-    a."application" AS "Application",
+Goal (what you’ll get at the end)
+A Grafana table like this:
+SubCluster
+Application
+2024-12-16
+2024-12-23
+2024-12-30
+2025-01-06
+Total
+✔ Column headers are actual ImportDate week starts
+✔ Fully automatic week-to-week
+✔ No Grafana hacks
+✔ Clean dashboard
+STEP-BY-STEP PROCESS
+🔹 STEP 1: Identify the latest week
+Run this once to verify your data:
+Copy code
+Sql
+SELECT MAX(DATE_TRUNC('week', "ImportDate"::date)) AS latest_week
+FROM pilothouse_admin.wasabi_bg01_reporting;
+📌 Note this value — dynamic SQL will compute it automatically later.
+🔹 STEP 2: Decide where dynamic SQL will live
+✅ Best choice: PostgreSQL FUNCTION
+Why?
+Grafana can query it like a table
+Clean
+Reusable
+👉 We’ll create one function and never touch Grafana again.
+🔹 STEP 3: Create the function (core step)
+Run this in your PostgreSQL database (once).
+Copy code
+Sql
+CREATE OR REPLACE FUNCTION get_weekly_app_counts()
+RETURNS SETOF record
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    w0 date;
+    w1 date;
+    w2 date;
+    w3 date;
+    sql text;
+BEGIN
+    -- 1. Find latest week
+    SELECT MAX(DATE_TRUNC('week', "ImportDate"::date))
+    INTO w0
+    FROM pilothouse_admin.wasabi_bg01_reporting;
 
-    COUNT(CASE WHEN week_start = l.latest_week - INTERVAL '3 week' THEN 1 END) AS "W3",
-    COUNT(CASE WHEN week_start = l.latest_week - INTERVAL '2 week' THEN 1 END) AS "W2",
-    COUNT(CASE WHEN week_start = l.latest_week - INTERVAL '1 week' THEN 1 END) AS "W1",
-    COUNT(CASE WHEN week_start = l.latest_week THEN 1 END) AS "W0",
+    -- 2. Calculate previous weeks
+    w1 := w0 - INTERVAL '1 week';
+    w2 := w0 - INTERVAL '2 week';
+    w3 := w0 - INTERVAL '3 week';
 
-    l.latest_week - INTERVAL '3 week' AS "W3_Date",
-    l.latest_week - INTERVAL '2 week' AS "W2_Date",
-    l.latest_week - INTERVAL '1 week' AS "W1_Date",
-    l.latest_week AS "W0_Date",
+    -- 3. Build dynamic SQL
+    sql := format($f$
+        SELECT
+            COALESCE(a."it_sub_cluster", 'Unknown') AS "SubCluster",
+            a."application" AS "Application",
 
-    COUNT(*) AS "Total"
-FROM base b
-CROSS JOIN latest l
-LEFT JOIN pilothouse_admin.wasabi_get_apmsubcluster a
-    ON a."application" = b."AppName"
-GROUP BY a."it_sub_cluster", a."application", l.latest_week
-ORDER BY "Total" DESC;
+            COUNT(CASE WHEN DATE_TRUNC('week', b."ImportDate"::date) = %L THEN 1 END) AS "%s",
+            COUNT(CASE WHEN DATE_TRUNC('week', b."ImportDate"::date) = %L THEN 1 END) AS "%s",
+            COUNT(CASE WHEN DATE_TRUNC('week', b."ImportDate"::date) = %L THEN 1 END) AS "%s",
+            COUNT(CASE WHEN DATE_TRUNC('week', b."ImportDate"::date) = %L THEN 1 END) AS "%s",
+
+            COUNT(*) AS "Total"
+        FROM pilothouse_admin.wasabi_bg01_reporting b
+        LEFT JOIN pilothouse_admin.wasabi_get_apmsubcluster a
+            ON a."application" = b."AppName"
+        GROUP BY a."it_sub_cluster", a."application"
+        ORDER BY "Total" DESC
+    $f$,
+        w3, w3,
+        w2, w2,
+        w1, w1,
+        w0, w0
+    );
+
+    -- 4. Execute and return result
+    RETURN QUERY EXECUTE sql;
+END;
+$$;
+🔹 STEP 4: Query the function correctly (important)
+Because the function returns record, Grafana (and SQL) must know column types.
+Use this query in Grafana:
+Copy code
+Sql
+SELECT *
+FROM get_weekly_app_counts() AS t(
+    "SubCluster" text,
+    "Application" text,
+    "Week_3" int,
+    "Week_2" int,
+    "Week_1" int,
+    "Current_Week" int,
+    "Total" int
+);
