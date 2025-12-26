@@ -94,3 +94,67 @@ FROM get_weekly_app_counts() AS t(
     "Current_Week" int,
     "Total" int
 );
+
+
+
+
+
+
+
+
+
+
+CREATE OR REPLACE FUNCTION get_weekly_app_counts()
+RETURNS TABLE (
+    "SubCluster" text,
+    "Application" text,
+    w3 int,
+    w2 int,
+    w1 int,
+    w0 int,
+    "Total" int
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    w0_date date;
+    w1_date date;
+    w2_date date;
+    w3_date date;
+    sql text;
+BEGIN
+    -- latest week
+    SELECT MAX(DATE_TRUNC('week', "ImportDate"::date))
+    INTO w0_date
+    FROM pilothouse_admin.wasabi_bg01_reporting;
+
+    w1_date := w0_date - INTERVAL '1 week';
+    w2_date := w0_date - INTERVAL '2 week';
+    w3_date := w0_date - INTERVAL '3 week';
+
+    sql := format($f$
+        SELECT
+            COALESCE(a."it_sub_cluster"::text, 'Unknown') AS "SubCluster",
+            a."application"::text AS "Application",
+
+            COUNT(CASE WHEN DATE_TRUNC('week', b."ImportDate"::date) = %L THEN 1 END) AS "%s",
+            COUNT(CASE WHEN DATE_TRUNC('week', b."ImportDate"::date) = %L THEN 1 END) AS "%s",
+            COUNT(CASE WHEN DATE_TRUNC('week', b."ImportDate"::date) = %L THEN 1 END) AS "%s",
+            COUNT(CASE WHEN DATE_TRUNC('week', b."ImportDate"::date) = %L THEN 1 END) AS "%s",
+
+            COUNT(*) AS "Total"
+        FROM pilothouse_admin.wasabi_bg01_reporting b
+        LEFT JOIN pilothouse_admin.wasabi_get_apmsubcluster a
+            ON a."application" = b."AppName"
+        GROUP BY a."it_sub_cluster", a."application"
+        ORDER BY "Total" DESC
+    $f$,
+        w3_date, w3_date,
+        w2_date, w2_date,
+        w1_date, w1_date,
+        w0_date, w0_date
+    );
+
+    RETURN QUERY EXECUTE sql;
+END;
+$$;
