@@ -1,28 +1,30 @@
-WITH weekly_latest AS (
+WITH base AS (
     SELECT
         b."AppName",
-        DATE_TRUNC('week', b."ImportDate"::date) AS week_start,
-        MAX(b."ImportDate"::date) AS latest_date
+        DATE_TRUNC('week', b."ImportDate"::date) AS week_start
     FROM pilothouse_admin.wasabi_bg01_reporting b
-    GROUP BY 1, 2
 ),
-filtered_data AS (
-    SELECT b.*
-    FROM pilothouse_admin.wasabi_bg01_reporting b
-    JOIN weekly_latest wl 
-      ON wl."AppName" = b."AppName" 
-      AND DATE_TRUNC('week', b."ImportDate"::date) = wl.week_start
-      AND b."ImportDate"::date = wl.latest_date
+latest AS (
+    SELECT MAX(week_start) AS latest_week FROM base
 )
 SELECT
-    -- This "WeekDate" will become your dynamic column header
-    DATE_TRUNC('week', b."ImportDate"::date)::date AS "WeekDate", 
-    COALESCE(a."it_sub_cluster", 'Unknown SubCluster') AS "SubClusterName", 
-    a."application" AS "ApplicationName",
-    COUNT(*) AS "TotalCount"
-FROM filtered_data b
-LEFT JOIN pilothouse_admin.wasabi_get_apmsubcluster a ON a."application" = b."AppName"
-WHERE a."it_sub_cluster" IN ($ApmSubCluster)
-  AND b."ImportDate" >= CURRENT_DATE - INTERVAL '4 weeks'
-GROUP BY 1, 2, 3
-ORDER BY "WeekDate" DESC;
+    COALESCE(a."it_sub_cluster", 'Unknown SubCluster') AS "SubCluster",
+    a."application" AS "Application",
+
+    COUNT(CASE WHEN week_start = l.latest_week - INTERVAL '3 week' THEN 1 END) AS "W3",
+    COUNT(CASE WHEN week_start = l.latest_week - INTERVAL '2 week' THEN 1 END) AS "W2",
+    COUNT(CASE WHEN week_start = l.latest_week - INTERVAL '1 week' THEN 1 END) AS "W1",
+    COUNT(CASE WHEN week_start = l.latest_week THEN 1 END) AS "W0",
+
+    l.latest_week - INTERVAL '3 week' AS "W3_Date",
+    l.latest_week - INTERVAL '2 week' AS "W2_Date",
+    l.latest_week - INTERVAL '1 week' AS "W1_Date",
+    l.latest_week AS "W0_Date",
+
+    COUNT(*) AS "Total"
+FROM base b
+CROSS JOIN latest l
+LEFT JOIN pilothouse_admin.wasabi_get_apmsubcluster a
+    ON a."application" = b."AppName"
+GROUP BY a."it_sub_cluster", a."application", l.latest_week
+ORDER BY "Total" DESC;
