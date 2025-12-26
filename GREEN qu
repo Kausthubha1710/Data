@@ -212,3 +212,51 @@ BEGIN
     RETURN QUERY EXECUTE sql;
 END;
 $$;
+
+
+
+
+
+
+
+CREATE OR REPLACE FUNCTION get_weekly_app_counts_dyn()
+RETURNS SETOF record
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    week_rec record;
+    col_list text := '';
+    sql text;
+BEGIN
+    -- Build dynamic columns for last 4 weeks
+    FOR week_rec IN
+        SELECT DISTINCT DATE_TRUNC('week', "ImportDate"::date) AS week_start
+        FROM pilothouse_admin.wasabi_bg01_reporting
+        ORDER BY week_start DESC
+        LIMIT 4
+    LOOP
+        col_list := col_list || format(
+            'COUNT(CASE WHEN DATE_TRUNC(''week'', b."ImportDate"::date)::date = ''%s''::date THEN 1 END) AS "%s", ',
+            week_rec.week_start,
+            to_char(week_rec.week_start, 'YYYY-MM-DD')
+        );
+    END LOOP;
+
+    col_list := left(col_list, length(col_list) - 2); -- remove trailing comma
+
+    sql := format('
+        SELECT
+            COALESCE(a."it_sub_cluster"::text, ''Unknown''::text) AS "SubCluster",
+            a."application"::text AS "Application",
+            %s,
+            COUNT(*) AS "Total"
+        FROM pilothouse_admin.wasabi_bg01_reporting b
+        LEFT JOIN pilothouse_admin.wasabi_get_apmsubcluster a
+            ON a."application" = b."AppName"
+        GROUP BY a."it_sub_cluster", a."application"
+        ORDER BY "Total" DESC;
+    ', col_list);
+
+    RETURN QUERY EXECUTE sql;
+END;
+$$;
