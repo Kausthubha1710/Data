@@ -1,1 +1,32 @@
+from flask import Flask, request, jsonify
+import subprocess
+import threading
+
+app = Flask(__name__)
+
+# Security: Map specific keys to commands to prevent arbitrary execution
+COMMAND_MAP = {
+    "reporting": ["python", "main.py", "--table", "reporting", "--config", "SA05 JADCode"],
+    "base": ["python", "main.py", "--table", "base", "--config", "SA05 JADCode"],
+    "sync": ["python", "main.py", "--table", "sync", "--config", "SA05 JADCode"]
+}
+
+def run_script(cmd):
+    # Runs the script in the background
+    subprocess.run(cmd, cwd="/path/to/your/scripts")
+
+@app.route('/run-task', methods=['POST'])
+def handle_task():
+    task_type = request.json.get('task') # e.g., "sync"
+    
+    if task_type in COMMAND_MAP:
+        # Run as a thread so the button doesn't "hang" or timeout
+        thread = threading.Thread(target=run_script, args=(COMMAND_MAP[task_type],))
+        thread.start()
+        return jsonify({"status": "Started", "task": task_type}), 200
+    
+    return jsonify({"error": "Invalid task"}), 400
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
 
