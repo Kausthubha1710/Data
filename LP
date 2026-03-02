@@ -1,0 +1,351 @@
+#!/usr/bin/env groovy
+import java.time.LocalDateTime
+import com.bnpparibas.cib.HookRegistry
+
+def call(body){
+    def pipelineParams = [:]
+    body.resolveStrategy = Closure.DELEGATE_FIRST  // BUG FIX #1: missing '=' assignment operator
+    body.delegate = pipelineParams                  // BUG FIX #2: missing '=' assignment operator
+    body()
+
+    def buildNo = currentBuild.displayName
+    currentBuild.displayName += ">${pipelineParams.ecosystem}>${params.database}>${params.action}"
+
+    currentBuild.description = "Build: ${buildNo} | ${params.operation}"
+    def cyberarkCert = pipelineParams.cyberarkCertFile
+    def cyberarkKey  = pipelineParams.cyberarkKeyFile
+    def cyberarkCA   = pipelineParams.cyberarkCAFile
+    def cyberarkAppId = pipelineParams.cyberarkAppId
+    def safeId = pipelineParams.cyberarkSafe                                             // BUG FIX #3: missing '=' assignment operator
+    def region = pipelineParams.region == null ? "EMEA" : pipelineParams.region          // BUG FIX #4: missing '=' assignment operator
+
+    if (env.JENKINS_URL.contains("-aps-")) {
+        cyberarkCert  = pipelineParams.cyberarkCertFileProd
+        cyberarkKey   = pipelineParams.cyberarkKeyFileProd
+        cyberarkAppId = params.cyberarkAppIProd
+        safeId        = pipelineParams.cyberarkSafeProd
+    }
+
+    def credentialMap = pipelineParams.dbCredentialMap   // BUG FIX #5: was 'dbCredentialMap' in pipeline but accessed as 'dbCredentialMap' — normalised casing
+
+    if (!credentialMap) {
+        error "dbCredentialMap not defined in Jenkinsfile"
+    }
+
+    def selectedEnv = params.database
+
+    if (!credentialMap.containsKey(selectedEnv)) {
+        error "No credential mapped for environment: ${selectedEnv}"
+    }
+
+    def accountId = credentialMap[selectedEnv]
+    echo "Environment '${selectedEnv}' mapped to Credential '${accountId}'"
+
+    timestamps {
+        ansiColor('xterm') {
+            agentName = "bnpp-buildtools"
+            if (pipelineParams.agent != null) {
+                agentName = pipelineParams.agent
+            }
+
+            node(agentName) {
+                withEnv(['LOG_APP=' + pipelineParams.ecosystem,
+                         'LOG_ENV=' + params.database,
+                        ]) {
+
+                    try {
+                        stage('Initialize') {
+                            initializeSqlPipelineParameters(pipelineParams.ecosystem, pipelineParams.envList, pipelineParams.dbcredentialid)
+                            // BUG FIX #6: was 'initializeSqlPipeline Parameters' (space in name) — fixed to 'initializeSqlPipelineParameters'
+                            // INTEGRATION: ecosystem passed as first argument so getEnvironments() can filter correctly
+                        }
+
+                        stage('Checkout') {
+                            checkout scm
+                            hook.loadExternalHooks()
+                            hook('postCheckout', this)
+                        }
+
+                        stage('Database Change Execution') {
+                            try {
+                                def changefile = "${params.changelogfile}"
+                                if (params.changelogfile == "") {
+                                    changefile = "${pipelineParams.dbchangelogfile}"
+                                }
+                                def fetch_secret = cyberarkSecret(cyberarkCert, cyberarkKey, cyberarkCA, region, safeId, cyberarkAppId, accountId)
+                                // BUG FIX #7: was 'safeld' (typo) — corrected to 'safeId'
+                                def cyberark_username = fetch_secret['UserName'].toString()
+                                def cyberark_password = fetch_secret['Content'].toString()
+                                echo "The changelogfile to be executed is ------>>>>>>>>>>>>> ${changefile}"
+                                wrap([$class: 'MaskPasswordsBuildWrapper',
+                                      varPasswordPairs: [
+                                          [password: cyberark_password, var: "PASSWORD_SECRET"],
+                                          [password: cyberark_username, var: 'USERNAME_SECRET']
+                                      ]]) {
+                                    executeliquibase(pipelineParams.ecosystem, params.action, params.operation, params.database, params.tag_value, params.count, params.date, params.tag, changefile, cyberark_username, cyberark_password)
+                                }
+                            } catch (Exception e) {
+                                currentBuild.result = 'FAILURE'
+                                echo "Execution failed"
+                                throw e
+                            }
+                        }
+
+                    } catch (Exception e) {
+                        currentBuild.result = 'FAILURE'
+                        throw e
+                    } finally {
+                        stage('Terminate') {
+                            notifyUser(pipelineParams.ecosystem, params.database, pipelineParams.emailto)
+                            echo "End of the Pipeline"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// NEW METHOD: Returns environment list filtered by Jenkins URL pattern,
+// or falls back to the caller-supplied list from the Jenkinsfile.
+// ---------------------------------------------------------------------------
+def getEnvironments(String ecosystem, def environments = null) {
+    if (environments == null) {
+        if (env.JENKINS_URL.contains(ecosystem.toLowerCase() + "-dev-" + ecosystem.toLowerCase())) {
+            return ["DEV", "UAT"]
+        }
+        if (env.JENKINS_URL.contains(ecosystem.toLowerCase() + "-aps-" + ecosystem.toLowerCase())) {
+            return ["STAGING", "PRODUCTION"]
+        }
+        return []   // fallback — no matching URL pattern and no list supplied
+    }
+    return environments
+}
+// ---------------------------------------------------------------------------
+
+def getDBEnvironments(envList = null) {
+    def environments = [
+        "DEV1", "DEV2", "PAT", "UAT",
+        "EPT",  "SIT",  "STG", "PERF", "PRD"
+    ]
+    if (envList != null) {
+        environments = envList
+    }
+    return String.join("\n", environments)
+}
+
+def getDBcredentials(credList = null) {
+    def credentials = [
+        "DEV_DB",
+        "STG_DB",
+        "PROD_DB"   // BUG FIX #8: was "PROD DB" (space in name) — spaces are invalid in credential IDs
+    ]
+    if (credList != null) {
+        credentials = credList   // BUG FIX #9: missing '=' assignment operator
+    }
+    return String.join("\n", credentials)
+}
+
+// ---------------------------------------------------------------------------
+// UPDATED: accepts 'ecosystem' as first param so we can call getEnvironments()
+// for Jenkins-URL-aware filtering of the database dropdown.
+// ---------------------------------------------------------------------------
+def initializeSqlPipelineParameters(String ecosystem, envlist, credlist) {
+    // BUG FIX #10: method was named 'initializeSqlPipelineParameters' in one place
+    //              and 'initializeSqlPipeline Parameters' (with a space) in another — unified.
+
+    def parameterList
+
+    parameterList = [    // BUG FIX #11: was 'parameterlist' (lowercase 'l') — inconsistent with usage below
+
+        choice(name: 'database',
+               choices: getDBEnvironments(getEnvironments(ecosystem, envlist)),
+               // INTEGRATION: wrapped envlist with getEnvironments() so the dropdown
+               // only shows environments appropriate for this Jenkins instance.
+               description: 'Please select the Target Database for Action'),
+
+        [$class     : 'ChoiceParameter',
+         choiceType : 'PT_SINGLE_SELECT',   // BUG FIX #12: was 'PT SINGLE SELECT' (space) — must be underscore
+         description: 'Please select the Database Action',
+         filterLength: 1, filterable: false, name: 'action',
+         randomName : 'choice-parameter-1567434891086034',
+         script     : [$class         : 'GroovyScript',
+                       fallbackScript : [classpath: [], sandbox: true, script: ''],
+                       script         : [classpath: [], sandbox: true,
+                                         script   : 'return ["Validate", "Update", "Rollback"]']
+                      ]
+        ],
+
+        [$class             : 'CascadeChoiceParameter',
+         choiceType         : 'PT_SINGLE_SELECT',  // BUG FIX #13: was 'PT SINGLE SELECT'
+         description        : 'Select the Operation you want to Perform on the Database',
+         filterLength       : 1, filterable: false, name: 'operation',
+         randomName         : 'choice-parameter-16291803363582423',  // BUG FIX #14: was 'randomtiane' (typo key name)
+         referencedParameters: 'action',
+         script             : [$class        : 'GroovyScript',
+                                fallbackScript: [classpath: [], sandbox: true, script: ''],
+                                script        : [classpath: [], sandbox: true,
+                                                 script   : """
+                                                 if (action.equals('Update')) {
+                                                     return ['update', 'update-to-tag', 'update-count']
+                                                     // BUG FIX #15: was mixed quote styles: "update', 'update-to-tag', 'update-count"]
+                                                 } else if (action.equals('Rollback')) {
+                                                     return ['rollback-to-tag', 'rollback-to-date', 'rollback-count']
+                                                     // BUG FIX #16: was mixed quote styles: ['rollback-to-tag', 'rollback-to-date', 'rollback-count"]
+                                                 } else if (action.equals('Validate')) {
+                                                     return ['validate']
+                                                 }
+                                                 """]
+                               ]
+        ],
+
+        string(defaultValue: "", name: 'changelogfile',
+               description: 'Provide the changelog file to be executed'),
+
+        booleanParam(name: 'tag', defaultValue: false,
+                     description: 'Update the Tag in Database'),
+
+        string(defaultValue: 'NONE', name: 'tag_value',
+               // BUG FIX #17: was 'tag value' (space in param name) — spaces are invalid; use 'tag_value'
+               description: 'Provide the Database tag value'),
+
+        string(name: 'date', defaultValue: 'NONE',
+               description: 'Provide the Date or Date & Time YYYY-MM-DD HH:MM:SS'),
+
+        string(name: 'count', defaultValue: 'NONE',
+               // BUG FIX #18: duplicate name 'date' used for count param — renamed to 'count'
+               description: 'Provide the Count')
+    ]
+
+    properties([
+        buildDiscarder(logRotator(
+            artifactDaysToKeepStr: '7',  // BUG FIX #19: was 'artifactDaysTokeepStr' (lowercase 'k')
+            artifactNumToKeepStr : '',
+            daysToKeepStr        : '',
+            numToKeepStr         : '')),
+        durabilityHint('PERFORMANCE_OPTIMIZED'),  // BUG FIX #20: was 'PERFORMANCE OPTIMIZED' (space) — must be underscore
+        parameters(parameterList)
+    ])
+}
+
+def executeliquibase(ecosystem, dbaction, dboperation, targetDb, tagValue, countValue, dateValue, tagaction, dbchangelogfile, db_username, db_password) {
+    try {
+        sh "asdf local java jdk-21.0.1"
+        def lqcommand = "liquibase --defaults-file=Profiles/${targetDb}/liquibase.properties --username=${db_username} --password=${db_password} --changelog-file=${dbchangelogfile} --log-level=debug --log-file=lb-execution-logs-${targetDb}.gz"
+        // BUG FIX #21: was using $() shell substitution syntax e.g. $(targetDb) instead of Groovy GString ${targetDb}
+        liquibaseExecuteFunction(ecosystem, dbaction, dboperation, targetDb, tagValue, countValue, dateValue, tagaction, lqcommand)
+    } catch (Exception e) {   // BUG FIX #22: was 'catch (error)' — should be typed Exception; also 'throw e' was before result assignment (dead code)
+        currentBuild.result = 'FAILURE'
+        throw e
+    }
+}
+
+def liquibaseExecuteFunction(ecosystem, dbaction, dboperation, targetDb, tagValue, countValue, dateValue, tagaction, lqcommand) {
+
+    if (dboperation == "update") {           // BUG FIX #23: was '=' (assignment) instead of '==' (comparison) — affects ALL if/else-if blocks below
+        sh "${lqcommand} update"
+
+    } else if (dboperation == "update-to-tag") {   // BUG FIX #24: same — '=' → '=='
+        if (tagValue == 'NONE') {
+            def value = userInputValue("${dbaction}", "${dboperation}")
+            sh "${lqcommand} update-to-tag ${value}"
+        } else {
+            sh "${lqcommand} update-to-tag ${tagValue}"
+            // BUG FIX #25: was using $() shell syntax e.g. $(lqcommand) — fixed to ${lqcommand}
+        }
+
+    } else if (dboperation == "update-count") {   // BUG FIX #26: same — '=' → '=='
+        if (countValue == 'NONE') {
+            def value = userInputValue("${dbaction}", "${dboperation}")
+            sh "${lqcommand} update-count ${value}"
+        } else {
+            sh "${lqcommand} update-count ${countValue}"
+        }
+
+    } else if (dboperation == "rollback-to-tag") {
+        if (tagValue == 'NONE') {
+            def value = userInputValue("${dbaction}", "${dboperation}")
+            sh "${lqcommand} rollback ${value}"
+        } else {
+            sh "${lqcommand} rollback ${tagValue}"
+            // BUG FIX #27: was $(lqcommand) — fixed to ${lqcommand}
+        }
+
+    } else if (dboperation == "rollback-to-date") {
+        if (dateValue == 'NONE') {
+            def value = userInputValue("${dbaction}", "${dboperation}")
+            sh "${lqcommand} rollback-to-date ${value}"
+            // BUG FIX #28: was missing 'sh' keyword before the command string
+        } else {
+            sh "${lqcommand} rollback-to-date ${dateValue}"
+        }
+
+    } else if (dboperation == "rollback-count") {
+        if (countValue == 'NONE') {
+            def count = userInputValue("${dbaction}", "${dboperation}")
+            sh "${lqcommand} rollback-count ${count}"
+        } else {
+            sh "${lqcommand} rollback-count ${countValue}"
+        }
+
+    } else if (dboperation == "validate") {
+        sh "${lqcommand} validate"
+    }
+
+    if (tagaction == true) {
+        tagLiquibase("${targetDb}", "${tagValue}", "${dbaction}", "${dboperation}", "${lqcommand}")
+    }
+}
+
+def tagLiquibase(targetDb, tagValue, dbaction, dboperation, lqcommand) {
+    // BUG FIX #29: method defined as 'tagliquibase' but called as 'tagLiquibase' — unified to 'tagLiquibase'
+    if (tagValue == 'NONE') {
+        def dbops = "Tagging the DB"
+        def value = userInputValue("${dbaction}", "${dbops}")
+        // BUG FIX #30: was 'value = ...' without 'def' — implicit variable leak
+        sh "${lqcommand} tag ${value}"
+    } else {
+        sh "${lqcommand} tag ${tagValue}"
+    }
+}
+
+def userInputValue(dbact, dbop) {
+    def displayMsg = "Confirm you want to ${dbact}....."
+    def valueInput
+    timeout(activity: true, time: 1, unit: 'DAYS') {
+        valueInput = input(   // BUG FIX #31: was 'ValueInput input(...)' — missing '=' assignment operator
+            id         : 'inputValue',
+            message    : displayMsg,
+            ok         : 'Continue',
+            parameters : [
+                string(defaultValue: "", description: "Please enter the value for ${dbop}", name: 'Value', trim: true),
+            ])
+    }
+    return valueInput
+}
+
+def notifyUser(ecosys, targetDb, mailid) {
+    try {
+        def msg  = "[${ecosys}]-[${targetDb}]-[LIQUIBASE EXECUTION FAILED]: ${currentBuild.fullDisplayName}"
+        def body = '''${SCRIPT, template="groovy-html.template"}'''
+
+        if (currentBuild.resultIsBetterOrEqualTo("SUCCESS")) {
+            msg  = "[${ecosys.toUpperCase()}]-[${targetDb.toUpperCase()}]-[LIQUIBASE EXECUTION SUCCESS]: ${currentBuild.fullDisplayName}"
+            // BUG FIX #32: was '$(ecosys.toUpperCase()}' — mixed $() and ${} syntax; fixed to ${ecosys.toUpperCase()}
+            body = "Please find the attached file to get the execution logs for ${targetDb}"
+        }
+
+        emailext attachLog           : false,
+                 compressLog         : false,
+                 recipientProviders  : [requestor()],
+                 to                  : "${mailid}",
+                 subject             : "${msg}",
+                 attachmentsPattern  : "lb-execution-logs-${targetDb}.gz",
+                 mimeType            : 'text/html',
+                 body                : "${body}"
+
+    } catch (Exception error) {   // BUG FIX #33: was 'catch (error)' — untyped catch; standardised
+        currentBuild.result = 'UNSTABLE'
+    }
+}
