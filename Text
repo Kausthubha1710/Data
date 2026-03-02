@@ -34,7 +34,10 @@ stage('Initialize') {
     steps {
         script {
 
-            // Get environments based on Jenkins folder
+            // ✅ Create workspace by checking out repo
+            checkout scm
+
+            // ✅ Now detect environments
             ENVIRONMENTS = getEnvironments()
 
             if (!ENVIRONMENTS || ENVIRONMENTS.isEmpty()) {
@@ -42,7 +45,6 @@ stage('Initialize') {
             }
 
             echo "Available environments: ${ENVIRONMENTS.join(', ')}"
-
         }
     }
 }
