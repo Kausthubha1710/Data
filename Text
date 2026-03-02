@@ -30,21 +30,65 @@ def getDBEnvironments(ecosystem, envList=null) {
 
 
 
+✅ Step 1 — Create Environment → Credential Mapping
+
+Inside liquibasePipeline.groovy
+
+def getCredentialForEnv(String environment) {
+
+    def credentialMap = [
+        "DEV" : "niowcis",
+        "TEST": "niowcis",
+        "UAT" : "niowcis",
+
+        "STG" : "evcwef",
+        "PRD" : "evcwef"
+    ]
+
+    return credentialMap[environment]
+}
+✅ Step 2 — Initialize Stage (IMPORTANT CHANGE)
+
+Modify Initialize stage:
+
 stage('Initialize') {
     steps {
         script {
 
-            // ✅ Create workspace by checking out repo
             checkout scm
 
-            // ✅ Now detect environments
+            // Get environments dynamically
             ENVIRONMENTS = getEnvironments()
 
-            if (!ENVIRONMENTS || ENVIRONMENTS.isEmpty()) {
-                error "No environments available for this Jenkins instance"
+            if (!ENVIRONMENTS) {
+                error "No environments detected"
             }
 
-            echo "Available environments: ${ENVIRONMENTS.join(', ')}"
+            // Select first environment (or parameter later)
+            SELECTED_ENV = ENVIRONMENTS[0]
+
+            // ✅ Resolve credential automatically
+            DB_CREDENTIAL_ID = getCredentialForEnv(SELECTED_ENV)
+
+            if (!DB_CREDENTIAL_ID) {
+                error "No credential mapped for ${SELECTED_ENV}"
+            }
+
+            echo "Environment: ${SELECTED_ENV}"
+            echo "Credential: ${DB_CREDENTIAL_ID}"
         }
     }
+}
+✅ Step 3 — Use Credential in DB Login
+
+Later:
+
+withCredentials([
+    usernamePassword(
+        credentialsId: DB_CREDENTIAL_ID,
+        usernameVariable: 'DB_USER',
+        passwordVariable: 'DB_PASS'
+    )
+]) {
+    sh "./run_liquibase.sh"
 }
