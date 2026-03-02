@@ -13,3 +13,17 @@ if (!credentialMap.containsKey(selectedEnv)) {
 def accountId = credentialMap[selectedEnv]
 
 echo "Environment '${selectedEnv}' mapped to Credential '${accountId}'"
+
+
+
+
+def getDBEnvironments(ecosystem, envList=null) {
+
+    def environments = getEnvironments(ecosystem, envList)
+
+    if (!environments || environments.isEmpty()) {
+        error "No environments available for this Jenkins instance"
+    }
+
+    return String.join("\n", environments)
+}
