@@ -1,0 +1,50 @@
+@Library('cibdbdbce-lib')_
+
+// ---------------------------------------------------------------------------
+// getEnvironments() filters the database dropdown based on which Jenkins
+// instance is running the build, preventing cross-environment deployments.
+//
+// Dev Jenkins  URL contains  "cibdbdbce-dev-cibdbdbce"  → DEV, TEST, UAT only
+// Prod Jenkins URL contains  "cibdbdbce-aps-cibdbdbce"  → STG, PRD only
+// ---------------------------------------------------------------------------
+def getEnvironments() {
+    def ECOSYSTEM = "cibdbdbce"   // BUG FIX #1: was 'def ECOSYSTEM "cibdbdbce"' — missing '=' assignment operator
+    if (env.JENKINS_URL.contains(ECOSYSTEM.toLowerCase() + "-dev-" + ECOSYSTEM.toLowerCase()))
+        return ["DEV", "TEST", "UAT"]
+    if (env.JENKINS_URL.contains(ECOSYSTEM.toLowerCase() + "-aps-" + ECOSYSTEM.toLowerCase()))
+        return ["STG", "PRD"]
+    return []
+}
+
+liquibasePipeline {
+    ecosystem           = 'pilothouse'
+    envList             = getEnvironments()
+    // INTEGRATION: envList is now populated by getEnvironments() instead of a
+    // hardcoded list, so the dropdown in the Jenkins UI automatically shows only
+    // the environments that are valid for this Jenkins instance.
+    // Previously it was: ['NONE','DEV','STAGING','PROD','Wasabi_DEV','Wasabi_STAGING','Wasabi_PROD']
+    // which exposed ALL environments on ALL Jenkins instances.
+
+    //agent             = 'rm-liquibase-new'
+    dbchangelogfile     = 'changelog.xml'
+
+    dbCredentialMap     = [
+        DEV             : 'niowcis',
+        STAGING         : 'evcwef',
+        PROD            : 'prod_db_cred',
+        Wasabi_DEV      : 'wasabi_dev_cred',
+        Wasabi_STAGING  : 'wasabi_stg_cred',
+        Wasabi_PROD     : 'wasabi_prod_cred'
+    ]
+
+    cyberarkCertFile    = 'cywcecle'
+    cyberarkKeyFile     = 'cybeccweile'
+    cyberarkCAFile      = 'cybeecewcCA'
+    cyberarkSafe        = 'IVececeOPSD'
+    cyberarkAppId       = 'cwecsBCE_DEV'
+    cyberarkCertFileProd= 'cyberarkCertFile'
+    cyberarkKeyFileProd = 'cyberarkKeyFile'
+    cyberarkAppIProd    = 'AcwescwD'
+    cyberarkSafeProd    = 'IV2ACIcewecwP'
+    emailto             = 'kausthubha.gajula@gmail.com'
+}
