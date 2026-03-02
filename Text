@@ -27,3 +27,22 @@ def getDBEnvironments(ecosystem, envList=null) {
 
     return String.join("\n", environments)
 }
+
+
+
+stage('Initialize') {
+    steps {
+        script {
+
+            // Get environments based on Jenkins folder
+            ENVIRONMENTS = getEnvironments()
+
+            if (!ENVIRONMENTS || ENVIRONMENTS.isEmpty()) {
+                error "No environments available for this Jenkins instance"
+            }
+
+            echo "Available environments: ${ENVIRONMENTS.join(', ')}"
+
+        }
+    }
+}
