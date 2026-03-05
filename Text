@@ -1,94 +1,109 @@
-def credentialMap = pipelineParams.dbCredentialMap
+def call(body) {
+    def pipelineParams = [:]
+    body.resolveStrategy = Closure.DELEGATE_FIRST
+    body.delegate = pipelineParams
+    body()
 
-if (!credentialMap) {
-    error "dbCredentialMap not defined in Jenkinsfile"
-}
+    def buildNo = currentBuild.displayName
+    currentBuild.displayName += ">${pipelineParams.ecosystem}>${params.database}>${params.action}"
+    currentBuild.description = "Build: ${buildNo} | ${params.operation}"
 
-def selectedEnv = params.database
+    def cyberarkCert  = pipelineParams.cyberarkCertFile
+    def cyberarkKey   = pipelineParams.cyberarkKeyFile
+    def cyberarkCA    = pipelineParams.cyberarkCAFile
+    def cyberarkAppId = pipelineParams.cyberarkAppId
+    def safeId        = pipelineParams.cyberarkSafe
+    def region        = pipelineParams.region == null ? "EMEA" : pipelineParams.region
 
-if (!credentialMap.containsKey(selectedEnv)) {
-    error "No credential mapped for environment: ${selectedEnv}"
-}
-
-def accountId = credentialMap[selectedEnv]
-
-echo "Environment '${selectedEnv}' mapped to Credential '${accountId}'"
-
-
-
-
-def getDBEnvironments(ecosystem, envList=null) {
-
-    def environments = getEnvironments(ecosystem, envList)
-
-    if (!environments || environments.isEmpty()) {
-        error "No environments available for this Jenkins instance"
+    if (env.JENKINS_URL.contains("-aps-")) {
+        cyberarkCert  = pipelineParams.cyberarkCertFileProd
+        cyberarkKey   = pipelineParams.cyberarkKeyFileProd
+        cyberarkAppId = params.cyberarkAppIProd
+        safeId        = pipelineParams.cyberarkSafeProd
     }
 
-    return String.join("\n", environments)
-}
-
-
-
-✅ Step 1 — Create Environment → Credential Mapping
-
-Inside liquibasePipeline.groovy
-
-def getCredentialForEnv(String environment) {
-
-    def credentialMap = [
-        "DEV" : "niowcis",
-        "TEST": "niowcis",
-        "UAT" : "niowcis",
-
-        "STG" : "evcwef",
-        "PRD" : "evcwef"
-    ]
-
-    return credentialMap[environment]
-}
-✅ Step 2 — Initialize Stage (IMPORTANT CHANGE)
-
-Modify Initialize stage:
-
-stage('Initialize') {
-    steps {
-        script {
-
-            checkout scm
-
-            // Get environments dynamically
-            ENVIRONMENTS = getEnvironments()
-
-            if (!ENVIRONMENTS) {
-                error "No environments detected"
+    timestamps {
+        ansiColor('xterm') {
+            def agentName = "bnpp-buildtools"
+            if (pipelineParams.agent != null) {
+                agentName = pipelineParams.agent
             }
 
-            // Select first environment (or parameter later)
-            SELECTED_ENV = ENVIRONMENTS[0]
+            node(agentName) {
+                withEnv(['LOG_APP=' + pipelineParams.ecosystem,
+                         'LOG_ENV=' + params.database]) {
 
-            // ✅ Resolve credential automatically
-            DB_CREDENTIAL_ID = getCredentialForEnv(SELECTED_ENV)
+                    try {
+                        stage('Initialize') {
+                            initializeSqlPipelineParameters(pipelineParams.ecosystem, pipelineParams.envList)
+                        }
 
-            if (!DB_CREDENTIAL_ID) {
-                error "No credential mapped for ${SELECTED_ENV}"
+                        // -------------------------------------------------------
+                        // GUARD: Stop here on first run (parameter registration).
+                        // params.database is null/empty until the user has
+                        // actually filled in the form and clicked Build.
+                        // -------------------------------------------------------
+                        if (!params.database || params.database == 'NONE') {
+                            echo "Parameters registered. Please trigger the build again with your selections."
+                            currentBuild.result = 'NOT_BUILT'
+                            return
+                        }
+
+                        // Only reaches here on a real triggered build
+                        def credentialMap = pipelineParams.dbCredentialMap
+
+                        if (!credentialMap) {
+                            error "dbCredentialMap not defined in Jenkinsfile"
+                        }
+
+                        if (!credentialMap.containsKey(params.database)) {
+                            error "No credential mapped for environment: ${params.database}"
+                        }
+
+                        def accountId = credentialMap[params.database]
+                        echo "Environment '${params.database}' mapped to Credential '${accountId}'"
+
+                        stage('Checkout') {
+                            checkout scm
+                            hook.loadExternalHooks()
+                            hook('postCheckout', this)
+                        }
+
+                        stage('Database Change Execution') {
+                            try {
+                                def changefile = params.changelogfile ?: pipelineParams.dbchangelogfile
+
+                                def fetch_secret    = cyberarkSecret(cyberarkCert, cyberarkKey, cyberarkCA, region, safeId, cyberarkAppId, accountId)
+                                def cyberark_username = fetch_secret['UserName'].toString()
+                                def cyberark_password = fetch_secret['Content'].toString()
+
+                                echo "The changelogfile to be executed is ------>>>>>>>>>>>>> ${changefile}"
+
+                                wrap([$class: 'MaskPasswordsBuildWrapper',
+                                      varPasswordPairs: [
+                                          [password: cyberark_password, var: 'PASSWORD_SECRET'],
+                                          [password: cyberark_username, var: 'USERNAME_SECRET']
+                                      ]]) {
+                                    executeliquibase(pipelineParams.ecosystem, params.action, params.operation, params.database, params.tag_value, params.count, params.date, params.tag, changefile, cyberark_username, cyberark_password)
+                                }
+                            } catch (Exception e) {
+                                currentBuild.result = 'FAILURE'
+                                echo "Execution failed"
+                                throw e
+                            }
+                        }
+
+                    } catch (Exception e) {
+                        currentBuild.result = 'FAILURE'
+                        throw e
+                    } finally {
+                        stage('Terminate') {
+                            notifyUser(pipelineParams.ecosystem, params.database, pipelineParams.emailto)
+                            echo "End of the Pipeline"
+                        }
+                    }
+                }
             }
-
-            echo "Environment: ${SELECTED_ENV}"
-            echo "Credential: ${DB_CREDENTIAL_ID}"
         }
     }
-}
-✅ Step 3 — Use Credential in DB Login
-
-Later:
-
-withCredentials([
-    usernamePassword(
-        credentialsId: DB_CREDENTIAL_ID,
-        usernameVariable: 'DB_USER',
-        passwordVariable: 'DB_PASS'
-    )
-]) {
-    sh "./run_liquibase.sh"
 }
