@@ -1,102 +1,37 @@
-curl -o /dev/null -s -w "\
-DNS Lookup: %{time_namelookup}s\n\
-TCP Connect: %{time_connect}s\n\
-TLS Handshake: %{time_appconnect}s\n\
-Server Processing (TTFB): %{time_starttransfer}s\n\
-Total Time: %{time_total}s\n" \
-https://your-api-url
-
-
-
-curl http://<service>/actuator/metrics/http.server.requests
-
-
-Check live request latency from logs
-Bash
-kubectl logs <pod-name> | grep "Completed"
-Spring Boot default logs show:
-
-Completed 200 OK in 423 ms
-👉 That is backend processing time only.
-✅ 3. Measure Database Query Time (PostgreSQL)
-Enter DB pod
-Bash
-kubectl exec -it <postgres-pod> -- psql -U <user> -d <db>
-Find currently running slow queries
-SQL
-SELECT pid,
-       now() - query_start AS duration,
-       query
+SELECT
+    pid,
+    usename,
+    state,
+    wait_event_type,
+    wait_event,
+    now() - query_start AS runtime,
+    query
 FROM pg_stat_activity
-WHERE state='active'
-ORDER BY duration DESC;
-Enable slow query logging (runtime — no restart)
-SQL
-ALTER SYSTEM SET log_min_duration_statement = 100;
-SELECT pg_reload_conf();
-Logs queries taking >100ms.
-Check slow queries
-Inside pod:
-Bash
-kubectl logs <postgres-pod> | grep duration
-Example output:
+WHERE state <> 'idle'
+ORDER BY runtime DESC;
 
-duration: 532 ms execute select ...
-👉 This is pure DB time.
-✅ 4. Compare Backend vs DB Time (Key Step)
-Now compare:
 
-Spring Boot log time  = 600 ms
-Postgres query time   = 500 ms
---------------------------------
-App processing        = 100 ms
-You now know exactly where latency sits.
-✅ 5. Kubernetes Network + Pod Latency
-Check pod resource pressure
-Bash
-kubectl top pod
-Look for:
-CPU near limit → throttling
-Memory near limit → GC delay
-Check node pressure
-Bash
-kubectl top node
-Check pod restart / probe issues
-Bash
-kubectl describe pod <pod-name>
-Look for:
 
-Readiness probe failed
-Liveness probe failed
-CPU throttling
-✅ 6. Measure Service-to-Service Network Time
-Exec into backend pod:
-Bash
-kubectl exec -it <backend-pod> -- sh
-Then call DB or downstream service:
-Bash
-time curl http://dependency-service
-Output:
+SELECT
+    blocked.pid AS blocked_pid,
+    blocked.query AS blocked_query,
+    blocking.pid AS blocking_pid,
+    blocking.query AS blocking_query
+FROM pg_catalog.pg_locks blocked_locks
+JOIN pg_stat_activity blocked
+    ON blocked.pid = blocked_locks.pid
+JOIN pg_catalog.pg_locks blocking_locks
+    ON blocking_locks.locktype = blocked_locks.locktype
+    AND blocking_locks.database IS NOT DISTINCT FROM blocked_locks.database
+    AND blocking_locks.relation IS NOT DISTINCT FROM blocked_locks.relation
+    AND blocking_locks.page IS NOT DISTINCT FROM blocked_locks.page
+    AND blocking_locks.tuple IS NOT DISTINCT FROM blocked_locks.tuple
+    AND blocking_locks.virtualxid IS NOT DISTINCT FROM blocked_locks.virtualxid
+    AND blocking_locks.transactionid IS NOT DISTINCT FROM blocked_locks.transactionid
+    AND blocking_locks.pid != blocked_locks.pid
+JOIN pg_stat_activity blocking
+    ON blocking.pid = blocking_locks.pid
+WHERE NOT blocked_locks.granted;
 
-real    0m0.320s
-This shows internal cluster latency.
-✅ 7. Check Kubernetes Service Routing Delay
-Bash
-kubectl get endpoints <service-name>
-Verify endpoints exist and are healthy.
-✅ FINAL LATENCY BREAKDOWN (No Code Method)
-After running above commands:
-Layer
-Command
-Total API time
-curl timing
-Backend processing
-kubectl logs
-DB execution
-pg_stat_activity / logs
-Network latency
-curl inside pod
-Resource bottleneck
-kubectl top
-Probe delays
-kubectl describe pod
+
+
