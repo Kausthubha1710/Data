@@ -89,6 +89,199 @@ Example Teams/Slack message:
 🚨 MAY Deployment Issue Detected
 
 Argo Sync: SUCCESS
+
+
+
+GOAL (What You Are Building)
+After every MAY deployment via Argo CD:
+✅ System automatically checks if app really works
+✅ Detects issues like your 503 ingress problem
+✅ Sends alert if deployment is broken
+No manual checking.
+🧠 FINAL FLOW (Understand First)
+You will create this:
+Plain text
+Argo CD deploys MAY
+        ↓
+Argo CD notifies n8n
+        ↓
+n8n checks application health
+        ↓
+If problem → alert
+If OK → do nothing
+✅ PART 0 — What Must Already Exist
+Before starting, you must have:
+✔ MAY app deployed using Argo CD
+✔ n8n running somewhere (VM / Kubernetes / Docker)
+✔ Access to modify Argo CD manifests
+If n8n is not installed → tell me, I’ll guide separately.
+✅ PART 1 — Create Workflow in n8n (FIRST THING)
+We start from n8n.
+Step 1.1 — Open n8n UI
+Go to:
+
+http://<your-n8n-url>
+Click:
+
++ New Workflow
+Name it:
+
+MAY Deployment Validator
+Step 1.2 — Add Webhook Node (START POINT)
+Click Add Node → search:
+
+Webhook
+Set:
+Field
+Value
+HTTP Method
+POST
+Path
+argo-may-validate
+Response Mode
+On Received
+Click Save.
+✅ Why this step?
+This creates an endpoint like:
+
+https://n8n-domain/webhook/argo-may-validate
+Argo CD will call this URL after deployment.
+Step 1.3 — Copy Webhook URL
+Top right → copy:
+
+Production URL
+Keep it safe.
+You will use it in Argo CD.
+✅ PART 2 — Add Wait Node
+Step 2.1 — Add Node → Wait
+Connect it after Webhook.
+Set:
+
+Wait: 30 seconds
+✅ Why?
+After deployment:
+pods restart
+ingress updates
+app warms up
+Immediate checks = false failure.
+✅ PART 3 — Internal Health Check
+Step 3.1 — Add HTTP Request Node
+Connect after Wait.
+Set:
+Field
+Value
+Method
+GET
+URL
+http://may-service:8080/actuator/health⁠�
+(Change service name if needed.)
+✅ What this checks
+Inside Kubernetes:
+
+Is application running?
+✅ PART 4 — External Health Check (VERY IMPORTANT)
+Step 4.1 — Add Another HTTP Request Node
+Set:
+
+GET https://may-it-dev.echonet/actuator/health
+✅ What this checks
+Real user access:
+ingress
+TLS
+DNS
+routing
+This catches your 503 issue.
+✅ PART 5 — Add Decision Logic
+Step 5.1 — Add IF Node
+Condition:
+
+External status != UP
+Expression:
+
+{{$json["status"]}}  is not equal  UP
+✅ Meaning
+If external fails → deployment problem.
+✅ PART 6 — Add Alert Node
+(Add Email / Teams / Slack)
+Example (Email):
+Add node → Send Email
+Message:
+
+MAY deployment completed but external endpoint failed.
+
+Possible ingress or routing issue.
+✅ Why?
+Immediate notification instead of waiting for users.
+✅ PART 7 — Activate Workflow
+Top-right:
+
+Activate Workflow
+Now n8n is listening.
+✅ PART 8 — Connect Argo CD (MOST IMPORTANT)
+Now we tell Argo CD:
+After deployment → call n8n.
+Step 8.1 — Edit MAY Application YAML
+Add this Kubernetes Job.
+Add File (example)
+notify-n8n.yaml
+YAML
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: notify-n8n
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+spec:
+  template:
+    spec:
+      containers:
+      - name: curl
+        image: curlimages/curl
+        command:
+        - curl
+        - -X
+        - POST
+        - https://YOUR-N8N-URL/webhook/argo-may-validate
+      restartPolicy: Never
+Replace:
+
+YOUR-N8N-URL
+with real webhook URL.
+✅ What this means
+After Argo CD sync:
+
+PostSync Hook runs
+        ↓
+curl calls n8n
+        ↓
+Workflow starts automatically
+Step 8.2 — Commit to Git
+Bash
+git add notify-n8n.yaml
+git commit -m "Add n8n validation hook"
+git push
+Argo CD syncs automatically.
+✅ PART 9 — Test It
+Do a deployment:
+
+Change image tag
+OR
+Sync app manually
+Watch:
+Argo CD
+✔ Sync successful
+n8n
+Workflow starts automatically.
+✅ WHAT YOU SHOULD SEE
+If everything works:
+
+Webhook triggered
+Wait 30s
+Health checks executed
+No alert sent
+If ingress broken:
+
+Alert received instantly 🚨
 Pod Health: UP ✅
 External Endpoint: FAIL ❌
 
