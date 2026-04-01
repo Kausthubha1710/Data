@@ -1,0 +1,148 @@
+STEP 1 — Create n8n Webhook
+In n8n:
+Add Node:
+✅ Webhook
+Settings:
+
+HTTP Method: POST
+Path: argo-may-validate
+Example URL n8n gives:
+
+https://n8n.yourdomain/webhook/argo-may-validate
+👉 Copy this URL.
+STEP 2 — Add PostSync Hook in Argo CD
+Inside your MAY application manifest.
+Add a Kubernetes Job as PostSync hook.
+Example YAML
+YAML
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: notify-n8n
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+spec:
+  template:
+    spec:
+      containers:
+      - name: curl
+        image: curlimages/curl
+        command:
+        - curl
+        - -X
+        - POST
+        - https://n8n.yourdomain/webhook/argo-may-validate
+      restartPolicy: Never
+✅ What Happens Now
+Whenever Argo CD finishes syncing:
+
+PostSync Hook Runs
+        ↓
+Calls n8n automatically
+        ↓
+Workflow starts
+ZERO manual action.
+🧩 STEP 3 — Build Validation Workflow in n8n
+Now we make n8n intelligent.
+Node Flow
+Plain text
+Webhook
+   ↓
+Wait 30 sec (pods stabilize)
+   ↓
+HTTP Request → actuator health
+   ↓
+HTTP Request → public HTTPS endpoint
+   ↓
+IF checks fail
+   ↓
+Send alert + analysis
+Node 1 — Wait Node
+Add delay:
+
+30 seconds
+(Deployment needs warm-up.)
+Node 2 — Check Internal Health
+HTTP Request:
+
+GET http://may-service:8080/actuator/health
+Node 3 — Check Real User Endpoint
+
+GET https://may-it-dev.echonet/actuator/health
+This is important.
+You test ingress + TLS + routing.
+Node 4 — IF Logic
+Condition:
+
+Internal = UP
+AND
+External != UP
+🎯 MAGIC PART — Intelligent Detection
+If above condition true:
+n8n concludes automatically:
+
+Ingress / routing problem likely
+(Exactly like your earlier issue.)
+Node 5 — Send Smart Alert
+Example Teams/Slack message:
+
+🚨 MAY Deployment Issue Detected
+
+Argo Sync: SUCCESS
+Pod Health: UP ✅
+External Endpoint: FAIL ❌
+
+Probable Cause:
+Ingress or TLS routing issue.
+
+Check:
+nginx.ingress.kubernetes.io/rewrite-target
+🔥 What You Just Built
+This is NOT monitoring.
+This is:
+⭐ Deployment Intelligence Automation
+🧠 Why This Impresses Senior DevOps Engineers
+Because you moved from:
+
+Deployment Automation
+to
+
+Deployment Verification Automation
+
+
+🚀 NEXT LEVEL (You Can Add Later)
+Once this works, you can extend:
+⭐ Auto Log Collector
+If validation fails:
+
+kubectl logs
+kubectl describe pod
+kubectl get ingress
+Attach logs automatically in alert.
+⭐ Auto Rollback Trigger
+n8n calls:
+
+argocd app rollback may-app
+Only when real failure detected.
+(Not just pod restart.)
+⭐ Deployment Scorecard
+Every deployment gets:
+
+Success Rate
+Startup Time
+Health Score
+Failure Reason
+Sent daily.
+🏆 Reality Check
+You asked earlier:
+“If Argo CD restarts pods, are workflows useful?”
+Now you can see:
+Layer
+Responsibility
+Kubernetes
+Keep containers alive
+Argo CD
+Keep desired state
+n8n
+Ensure system actually works
+They complement — not replace — each other.
