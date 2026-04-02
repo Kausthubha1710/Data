@@ -1,0 +1,307 @@
+# Liquibase Jenkins
+
+**Version-controlled, reproducible, and auditable database changes
+across all environments.**
+
+------------------------------------------------------------------------
+
+## Table of Contents
+
+-   [Overview](#overview)
+-   [Directory Layout](#directory-layout)
+-   [Configuration -- Liquibase Properties
+    (Profiles)](#configuration--liquibase-properties-profiles)
+-   [Release Changelog (release.xml)](#release-changelog-releasexml)
+-   [Master Changelog (changelog.xml)](#master-changelog-changelogxml)
+-   [Jenkins Pipeline Integration](#jenkins-pipeline-integration)
+-   [Adding a New Environment](#adding-a-new-environment)
+-   [Adding New Change-Sets](#adding-new-change-sets)
+-   [Lifecycle of a ChangeSet](#lifecycle-of-a-changeset)
+-   [Common Issues & Troubleshooting](#common-issues--troubleshooting)
+-   [License](#license)
+
+------------------------------------------------------------------------
+
+## Overview
+
+This repository contains **Liquibase change-sets** for managing a
+PostgreSQL schema across three environments:
+
+-   **DEV**
+-   **STG**
+-   **PRD**
+
+A Jenkins declarative pipeline automatically executes change-sets while
+pulling credentials and TLS artifacts from **CyberArk**.
+
+### Goals
+
+-   âœ… **Version-controlled** --- Stored in Git\
+-   âœ… **Reproducible** --- Same change across all environments\
+-   âœ… **Auditable** --- Liquibase logs executions in
+    `DATABASECHANGELOG`
+
+------------------------------------------------------------------------
+
+## Directory Layout
+
+    Profiles/
+     â”œâ”€â”€ DEV/liquibase.properties
+     â”œâ”€â”€ STG/liquibase.properties
+     â””â”€â”€ PRD/liquibase.properties
+
+    Release_<project_name>/
+     â”œâ”€â”€ release.xml
+     â””â”€â”€ Scripts/
+
+    Scripts/
+    Rollback/
+
+    changelog.xml
+    Jenkinsfile
+
+  Directory/File   Purpose
+  ---------------- ------------------------------------
+  Profiles         Environment-specific configuration
+  Release\_\*      Release-specific change-sets
+  Scripts          Shared SQL scripts
+  Rollback         Rollback SQL scripts
+  changelog.xml    Master changelog
+  Jenkinsfile      CI/CD pipeline
+
+------------------------------------------------------------------------
+
+## Configuration -- Liquibase Properties (Profiles)
+
+Each environment contains:
+
+    Profiles/<ENV>/liquibase.properties
+
+### Example (PostgreSQL)
+
+``` properties
+url=jdbc:postgresql://<host>:5432/<db_name>?currentSchema=<schema_name>&sslmode=verify-full
+driver=org.postgresql.Driver
+username=<db_user>
+password=${cyberark.password}
+
+logLevel=debug
+outputFile=SQL_OUT/${env}.sql
+defaultSchemaName=<schema_name>
+```
+
+> Adapt driver and URL format for other databases if required.
+
+------------------------------------------------------------------------
+
+## Release Changelog (`release.xml`)
+
+### Important ChangeSet Attributes
+
+  Attribute     Meaning                        Recommended Value
+  ------------- ------------------------------ -------------------
+  runOnChange   Re-executes when SQL changes   true
+  runAlways     Executes every run             false
+  id            Unique identifier              Required
+  labels        Jenkins filtering tag          Optional
+  context       Environment selection          Optional
+  author        Creator name                   Required
+
+### Example ChangeSet
+
+``` xml
+<databaseChangeLog
+ xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+ xsi:schemaLocation="
+ http://www.liquibase.org/xml/ns/dbchangelog
+ http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.8.xsd">
+
+    <changeSet
+        id="001-create-table"
+        author="h59281"
+        runOnChange="true"
+        labels="1.0-release"
+        context="release-1.0">
+
+        <sqlFile
+            path="Scripts/Project_name/create_table_1.sql"
+            relativeToChangelogFile="true"/>
+
+        <rollback>
+            <sql>
+                DROP TABLE IF EXISTS project_name.my_table;
+            </sql>
+        </rollback>
+
+    </changeSet>
+
+</databaseChangelog>
+```
+
+------------------------------------------------------------------------
+
+## Master Changelog (`changelog.xml`)
+
+``` xml
+<databaseChangelog
+ xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+ xsi:schemaLocation="
+ http://www.liquibase.org/xml/ns/dbchangelog
+ http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.8.xsd">
+
+    <includeAll path="Release_<project_name>/"/>
+
+</databaseChangelog>
+```
+
+------------------------------------------------------------------------
+
+## Jenkins Pipeline Integration
+
+  Component               Description
+  ----------------------- --------------------------------------------
+  ecosystem               Logical application name
+  Environment Detection   `getEnvironments()` determines environment
+  Credential Resolution   CyberArk credential mapping
+  TLS Files               Certificates stored in Jenkins
+  Execution               Runs `liquibase update`
+  Notifications           Email on success/failure
+
+### Sample Jenkinsfile Fragment
+
+``` groovy
+pipeline {
+    agent any
+
+    stages {
+        stage('Deploy DB changes') {
+            steps {
+                script {
+                    liquibasePipeline(
+                        credentialMap: dbCredentialMap,
+                        envs: getEnvironments(),
+                        changelogFile: 'changelog.xml',
+                        profileDir: 'Profiles/'
+                    )
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            mail to: emailto,
+                 subject: "Liquibase SUCCESS",
+                 body: "All DB changes applied."
+        }
+        failure {
+            mail to: emailto,
+                 subject: "Liquibase FAILURE",
+                 body: "Check Jenkins logs."
+        }
+    }
+}
+```
+
+------------------------------------------------------------------------
+
+## Adding a New Environment
+
+1.  Copy an existing profile:
+
+```{=html}
+<!-- -->
+```
+    Profiles/DEV â†’ Profiles/NEW_ENV
+
+2.  Update placeholders in `liquibase.properties`.
+
+3.  Modify `getEnvironments()`.
+
+4.  Add CyberArk credential mapping:
+
+``` groovy
+dbCredentialMap["NEW_ENV"] = "credential-id"
+```
+
+------------------------------------------------------------------------
+
+## Adding New Change-Sets
+
+1.  Create folder:
+
+```{=html}
+<!-- -->
+```
+    Release_<project_name>/feature_xyz/
+
+2.  Add XML file.
+3.  Define change-set with unique id & author.
+
+### Example
+
+``` xml
+<changeSet
+    id="005-add-index"
+    author="idge"
+    runOnChange="true"
+    labels="2.0-release"
+    context="release-2.0">
+
+    <sqlFile
+        path="Scripts/add_index.sql"
+        relativeToChangelogFile="true"/>
+
+    <rollback>
+        <sql>
+            DROP INDEX IF EXISTS idx_my_table_col;
+        </sql>
+    </rollback>
+
+</changeSet>
+```
+
+------------------------------------------------------------------------
+
+## Lifecycle of a ChangeSet
+
+  Phase              Liquibase Behavior
+  ------------------ ----------------------------------------------------
+  First Execution    Runs SQL and inserts record into DATABASECHANGELOG
+  Subsequent Runs    Skipped if checksum unchanged
+  runOnChange=true   Re-executes when SQL changes
+  runAlways=true     Executes every run
+  Rollback           `liquibase rollback <tag>`
+  Execution Order    Update = ascending, Rollback = descending
+
+------------------------------------------------------------------------
+
+## Common Issues & Troubleshooting
+
+  -----------------------------------------------------------------------
+  Issue                   Cause                   Solution
+  ----------------------- ----------------------- -----------------------
+  SQL file not found      Wrong relative path     Verify path
+
+  SSL connection errors   Missing certificates    Verify sslmode & cert
+                                                  files
+
+  Missing credential      CyberArk mapping absent Add credential mapping
+
+  Rollback not executed   No rollback block       Add `<rollback>`
+
+  Empty SQL output        No changes detected     Verify
+                                                  runOnChange/runAlways
+  -----------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+## License
+
+This repository is internal to **BNP Paribas Corporate & Institutional
+Banking**.
+
+Redistribution outside the organization is prohibited without explicit
+authorization.
