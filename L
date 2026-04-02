@@ -1,1 +1,411 @@
 
+liquibase.properties per environment:
+# Profiles/DEV/liquibase.properties
+url=jdbc:oracle:thin:@dev-db-host:1521/DEVDB
+driver=oracle.jdbc.OracleDriver
+classpath=ojdbc8.jar
+
+cyberark.safe=IVececeOPSD_DEV
+cyberark.appId=cwecsBCE_DEV
+cyberark.accountId=niowcis
+# Profiles/STAGING/liquibase.properties
+url=jdbc:oracle:thin:@stg-db-host:1521/STAGINGDB
+driver=oracle.jdbc.OracleDriver
+classpath=ojdbc8.jar
+
+cyberark.safe=IVececeOPSD_STG
+cyberark.appId=cwecsBCE_STG
+cyberark.accountId=evcwef
+# Profiles/PRD/liquibase.properties
+url=jdbc:oracle:thin:@prd-db-host:1521/PRDDB
+driver=oracle.jdbc.OracleDriver
+classpath=ojdbc8.jar
+
+cyberark.safe=IV2ACIcewecwP
+cyberark.appId=AcwescwD
+cyberark.accountId=prod_db_cred
+Jenkinsfile — only cert/key/ca remain:
+@Library('cibdbdbce-lib')_
+
+def getEnvironments() {
+    def ECOSYSTEM = "cibdbdbce"
+    if (env.JENKINS_URL.contains(ECOSYSTEM.toLowerCase() + "-dev-" + ECOSYSTEM.toLowerCase()))
+        return ["DEV", "TEST", "UAT"]
+    if (env.JENKINS_URL.contains(ECOSYSTEM.toLowerCase() + "-aps-" + ECOSYSTEM.toLowerCase()))
+        return ["STG", "PRD"]
+    return []
+}
+
+liquibasePipeline {
+    ecosystem            = 'pilothouse'
+    envList              = getEnvironments()
+    dbchangelogfile      = 'changelog.xml'
+
+    // Only cert/key/ca stay here — these are Jenkins-instance-level concerns
+    // Everything else (safe, appId, accountId) lives in liquibase.properties
+    cyberarkCertFile     = 'cywcecle'
+    cyberarkKeyFile      = 'cybeccweile'
+    cyberarkCAFile       = 'cybeecewcCA'
+    cyberarkCertFileProd = 'cyberarkCertFileProd'
+    cyberarkKeyFileProd  = 'cyberarkKeyFileProd'
+
+    emailto              = 'kausthubha.gajula@gmail.com'
+}
+liquibasePipeline.groovy — full updated file:
+#!/usr/bin/env groovy
+import java.time.LocalDateTime
+import com.bnpparibas.cib.HookRegistry
+
+def call(body) {
+    def pipelineParams = [:]
+    body.resolveStrategy = Closure.DELEGATE_FIRST
+    body.delegate = pipelineParams
+    body()
+
+    def cyberarkCert = pipelineParams.cyberarkCertFile
+    def cyberarkKey  = pipelineParams.cyberarkKeyFile
+    def cyberarkCA   = pipelineParams.cyberarkCAFile
+    def region       = pipelineParams.region == null ? "EMEA" : pipelineParams.region
+
+    // Switch to prod certs if running on prod Jenkins instance
+    // safe/appId/accountId are NOT switched here — they come from liquibase.properties
+    if (env.JENKINS_URL.contains("-aps-")) {
+        cyberarkCert = pipelineParams.cyberarkCertFileProd
+        cyberarkKey  = pipelineParams.cyberarkKeyFileProd
+    }
+
+    def buildNo = currentBuild.displayName
+    currentBuild.displayName += ">${pipelineParams.ecosystem}>${params.database}>${params.action}"
+    currentBuild.description  = "Build: ${buildNo} | ${params.operation}"
+
+    timestamps {
+        ansiColor('xterm') {
+            def agentName = "bnpp-buildtools"
+            if (pipelineParams.agent != null) {
+                agentName = pipelineParams.agent
+            }
+
+            node(agentName) {
+                withEnv(['LOG_APP=' + pipelineParams.ecosystem,
+                         'LOG_ENV='  + params.database]) {
+
+                    try {
+                        stage('Initialize') {
+                            initializeSqlPipelineParameters(pipelineParams.ecosystem, pipelineParams.envList)
+                        }
+
+                        // Guard: stop on first run before user has filled in parameters
+                        if (!params.database || params.database == 'NONE') {
+                            echo "Parameters registered. Please trigger the build again with your selections."
+                            currentBuild.result = 'NOT_BUILT'
+                            return
+                        }
+
+                        stage('Checkout') {
+                            checkout scm
+                            hook.loadExternalHooks()
+                            hook('postCheckout', this)
+                        }
+
+                        stage('Database Change Execution') {
+                            try {
+                                // Read safe, appId, accountId from the environment's
+                                // liquibase.properties — nothing comes from Jenkinsfile
+                                def props         = readLiquibaseProperties(params.database)
+                                def safeId        = props['cyberark.safe']
+                                def cyberarkAppId = props['cyberark.appId']
+                                def accountId     = props['cyberark.accountId']
+
+                                def changefile = params.changelogfile ?: pipelineParams.dbchangelogfile
+
+                                def fetch_secret      = cyberarkSecret(
+                                                            cyberarkCert,
+                                                            cyberarkKey,
+                                                            cyberarkCA,
+                                                            region,
+                                                            safeId,
+                                                            cyberarkAppId,
+                                                            accountId
+                                                        )
+                                def cyberark_username = fetch_secret['UserName'].toString()
+                                def cyberark_password = fetch_secret['Content'].toString()
+
+                                echo "Executing changelogfile: ${changefile}"
+
+                                wrap([$class: 'MaskPasswordsBuildWrapper',
+                                      varPasswordPairs: [
+                                          [password: cyberark_password, var: 'PASSWORD_SECRET'],
+                                          [password: cyberark_username, var: 'USERNAME_SECRET']
+                                      ]]) {
+                                    executeliquibase(
+                                        pipelineParams.ecosystem,
+                                        params.action,
+                                        params.operation,
+                                        params.database,
+                                        params.tag_value,
+                                        params.count,
+                                        params.date,
+                                        params.tag,
+                                        changefile,
+                                        cyberark_username,
+                                        cyberark_password
+                                    )
+                                }
+                            } catch (Exception e) {
+                                currentBuild.result = 'FAILURE'
+                                echo "Execution failed"
+                                throw e
+                            }
+                        }
+
+                    } catch (Exception e) {
+                        currentBuild.result = 'FAILURE'
+                        throw e
+                    } finally {
+                        stage('Terminate') {
+                            notifyUser(pipelineParams.ecosystem, params.database, pipelineParams.emailto)
+                            echo "End of the Pipeline"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Reads liquibase.properties for the selected environment and returns a map.
+// Must be called AFTER checkout scm so the Profiles/ folder is available.
+// ---------------------------------------------------------------------------
+def readLiquibaseProperties(String targetDb) {
+    def propsFile = "Profiles/${targetDb}/liquibase.properties"
+    def props     = [:]
+
+    if (!fileExists(propsFile)) {
+        error "liquibase.properties not found for environment '${targetDb}' at path: ${propsFile}"
+    }
+
+    readFile(propsFile).split('\n').each { line ->
+        line = line.trim()
+        if (!line || line.startsWith('#')) return
+        def parts = line.split('=', 2)
+        if (parts.size() == 2) {
+            props[parts[0].trim()] = parts[1].trim()
+        }
+    }
+
+    // Validate all three required CyberArk keys are present
+    ['cyberark.safe', 'cyberark.appId', 'cyberark.accountId'].each { key ->
+        if (!props[key]) {
+            error "Missing required property '${key}' in ${propsFile}"
+        }
+    }
+
+    return props
+}
+
+// ---------------------------------------------------------------------------
+// Returns filtered environment list based on Jenkins URL pattern,
+// or falls back to the caller-supplied list from the Jenkinsfile.
+// ---------------------------------------------------------------------------
+def getEnvironments(String ecosystem, def environments = null) {
+    if (environments == null) {
+        if (env.JENKINS_URL.contains(ecosystem.toLowerCase() + "-dev-" + ecosystem.toLowerCase()))
+            return ["DEV", "UAT"]
+        if (env.JENKINS_URL.contains(ecosystem.toLowerCase() + "-aps-" + ecosystem.toLowerCase()))
+            return ["STAGING", "PRODUCTION"]
+        return []
+    }
+    return environments
+}
+
+def getDBEnvironments(envList = null) {
+    def environments = [
+        "DEV1", "DEV2", "PAT", "UAT",
+        "EPT",  "SIT",  "STG", "PERF", "PRD"
+    ]
+    if (envList != null) {
+        environments = envList
+    }
+    return String.join("\n", environments)
+}
+
+def initializeSqlPipelineParameters(String ecosystem, envlist) {
+    def parameterList = [
+
+        choice(name: 'database',
+               choices: getDBEnvironments(getEnvironments(ecosystem, envlist)),
+               description: 'Please select the Target Database for Action'),
+
+        [$class      : 'ChoiceParameter',
+         choiceType  : 'PT_SINGLE_SELECT',
+         description : 'Please select the Database Action',
+         filterLength: 1, filterable: false, name: 'action',
+         randomName  : 'choice-parameter-1567434891086034',
+         script      : [$class        : 'GroovyScript',
+                        fallbackScript: [classpath: [], sandbox: true, script: ''],
+                        script        : [classpath: [], sandbox: true,
+                                         script   : 'return ["Validate", "Update", "Rollback"]']
+                       ]
+        ],
+
+        [$class              : 'CascadeChoiceParameter',
+         choiceType          : 'PT_SINGLE_SELECT',
+         description         : 'Select the Operation you want to Perform on the Database',
+         filterLength        : 1, filterable: false, name: 'operation',
+         randomName          : 'choice-parameter-16291803363582423',
+         referencedParameters: 'action',
+         script              : [$class        : 'GroovyScript',
+                                 fallbackScript: [classpath: [], sandbox: true, script: ''],
+                                 script        : [classpath: [], sandbox: true,
+                                                  script   : """
+                                                  if (action.equals('Update')) {
+                                                      return ['update', 'update-to-tag', 'update-count']
+                                                  } else if (action.equals('Rollback')) {
+                                                      return ['rollback-to-tag', 'rollback-to-date', 'rollback-count']
+                                                  } else if (action.equals('Validate')) {
+                                                      return ['validate']
+                                                  }
+                                                  """]
+                                ]
+        ],
+
+        string(defaultValue: "", name: 'changelogfile',
+               description: 'Provide the changelog file to be executed'),
+
+        booleanParam(name: 'tag', defaultValue: false,
+                     description: 'Update the Tag in Database'),
+
+        string(defaultValue: 'NONE', name: 'tag_value',
+               description: 'Provide the Database tag value'),
+
+        string(name: 'date', defaultValue: 'NONE',
+               description: 'Provide the Date or Date & Time YYYY-MM-DD HH:MM:SS'),
+
+        string(name: 'count', defaultValue: 'NONE',
+               description: 'Provide the Count')
+    ]
+
+    properties([
+        buildDiscarder(logRotator(
+            artifactDaysToKeepStr: '7',
+            artifactNumToKeepStr : '',
+            daysToKeepStr        : '',
+            numToKeepStr         : '')),
+        durabilityHint('PERFORMANCE_OPTIMIZED'),
+        parameters(parameterList)
+    ])
+}
+
+def executeliquibase(ecosystem, dbaction, dboperation, targetDb, tagValue, countValue, dateValue, tagaction, dbchangelogfile, db_username, db_password) {
+    try {
+        sh "asdf local java jdk-21.0.1"
+        def lqcommand = "liquibase --defaults-file=Profiles/${targetDb}/liquibase.properties --username=${db_username} --password=${db_password} --changelog-file=${dbchangelogfile} --log-level=debug --log-file=lb-execution-logs-${targetDb}.gz"
+        liquibaseExecuteFunction(ecosystem, dbaction, dboperation, targetDb, tagValue, countValue, dateValue, tagaction, lqcommand)
+    } catch (Exception e) {
+        currentBuild.result = 'FAILURE'
+        throw e
+    }
+}
+
+def liquibaseExecuteFunction(ecosystem, dbaction, dboperation, targetDb, tagValue, countValue, dateValue, tagaction, lqcommand) {
+
+    if (dboperation == "update") {
+        sh "${lqcommand} update"
+
+    } else if (dboperation == "update-to-tag") {
+        if (tagValue == 'NONE') {
+            def value = userInputValue("${dbaction}", "${dboperation}")
+            sh "${lqcommand} update-to-tag ${value}"
+        } else {
+            sh "${lqcommand} update-to-tag ${tagValue}"
+        }
+
+    } else if (dboperation == "update-count") {
+        if (countValue == 'NONE') {
+            def value = userInputValue("${dbaction}", "${dboperation}")
+            sh "${lqcommand} update-count ${value}"
+        } else {
+            sh "${lqcommand} update-count ${countValue}"
+        }
+
+    } else if (dboperation == "rollback-to-tag") {
+        if (tagValue == 'NONE') {
+            def value = userInputValue("${dbaction}", "${dboperation}")
+            sh "${lqcommand} rollback ${value}"
+        } else {
+            sh "${lqcommand} rollback ${tagValue}"
+        }
+
+    } else if (dboperation == "rollback-to-date") {
+        if (dateValue == 'NONE') {
+            def value = userInputValue("${dbaction}", "${dboperation}")
+            sh "${lqcommand} rollback-to-date ${value}"
+        } else {
+            sh "${lqcommand} rollback-to-date ${dateValue}"
+        }
+
+    } else if (dboperation == "rollback-count") {
+        if (countValue == 'NONE') {
+            def count = userInputValue("${dbaction}", "${dboperation}")
+            sh "${lqcommand} rollback-count ${count}"
+        } else {
+            sh "${lqcommand} rollback-count ${countValue}"
+        }
+
+    } else if (dboperation == "validate") {
+        sh "${lqcommand} validate"
+    }
+
+    if (tagaction == true) {
+        tagLiquibase("${targetDb}", "${tagValue}", "${dbaction}", "${dboperation}", "${lqcommand}")
+    }
+}
+
+def tagLiquibase(targetDb, tagValue, dbaction, dboperation, lqcommand) {
+    if (tagValue == 'NONE') {
+        def value = userInputValue("${dbaction}", "Tagging the DB")
+        sh "${lqcommand} tag ${value}"
+    } else {
+        sh "${lqcommand} tag ${tagValue}"
+    }
+}
+
+def userInputValue(dbact, dbop) {
+    def displayMsg = "Confirm you want to ${dbact}....."
+    def valueInput
+    timeout(activity: true, time: 1, unit: 'DAYS') {
+        valueInput = input(
+            id        : 'inputValue',
+            message   : displayMsg,
+            ok        : 'Continue',
+            parameters: [
+                string(defaultValue: "", description: "Please enter the value for ${dbop}", name: 'Value', trim: true)
+            ])
+    }
+    return valueInput
+}
+
+def notifyUser(ecosys, targetDb, mailid) {
+    try {
+        def msg  = "[${ecosys}]-[${targetDb}]-[LIQUIBASE EXECUTION FAILED]: ${currentBuild.fullDisplayName}"
+        def body = '''${SCRIPT, template="groovy-html.template"}'''
+
+        if (currentBuild.resultIsBetterOrEqualTo("SUCCESS")) {
+            msg  = "[${ecosys.toUpperCase()}]-[${targetDb.toUpperCase()}]-[LIQUIBASE EXECUTION SUCCESS]: ${currentBuild.fullDisplayName}"
+            body = "Please find the attached file to get the execution logs for ${targetDb}"
+        }
+
+        emailext attachLog          : false,
+                 compressLog        : false,
+                 recipientProviders : [requestor()],
+                 to                 : "${mailid}",
+                 subject            : "${msg}",
+                 attachmentsPattern : "lb-execution-logs-${targetDb}.gz",
+                 mimeType           : 'text/html',
+                 body               : "${body}"
+
+    } catch (Exception error) {
+        currentBuild.result = 'UNSTABLE'
+    }
+}
