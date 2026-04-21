@@ -1,0 +1,39 @@
+rules:
+{{- if .Values.ingress.hosts }}
+  {{- range .Values.ingress.hosts }}
+  - {{- if .host }}
+    host: {{ .host | quote }}
+    {{- end }}
+    http:
+      paths:
+      {{- if .paths }}
+        {{- range .paths }}
+        - path: {{ .path | default "/" }}
+          pathType: {{ .pathType | default "Prefix" }}
+          backend:
+            service:
+              name: {{ .service.name }}
+              port:
+                number: {{ .service.port }}
+        {{- end }}
+      {{- else }}
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: {{ $.Values.service.name }}
+              port:
+                number: {{ $.Values.service.port }}
+      {{- end }}
+  {{- end }}
+{{- else }}
+  - http:
+      paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: {{ .Values.service.name }}
+              port:
+                number: {{ .Values.service.port }}
+{{- end }}
