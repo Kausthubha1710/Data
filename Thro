@@ -1,0 +1,29 @@
+The CPU throttling alert on trident-operator is most likely caused by an extremely low CPU limit configuration rather than an application failure.
+Evidence
+Dynatrace reported:
+CPU throttling to limits ratio exceeded 50%.
+The graph shows repeated throttling spikes reaching 500%–1500%, which indicates Kubernetes is frequently restricting the container's CPU usage.
+The workload is configured with:
+YAML
+requests:
+  cpu: 10m
+limits:
+  cpu: 20m
+A limit of 20m CPU means the container can use only 2% of a single CPU core, which is very restrictive even for a lightweight operator.
+What is happening?
+The trident-operator periodically performs background tasks such as monitoring storage resources and reconciling Kubernetes objects. During these operations, it briefly needs more CPU than the configured 20m limit.
+When that happens:
+The container requests more CPU.
+Kubernetes enforces the 20m limit.
+The excess CPU is denied (throttled).
+Dynatrace detects the throttling and raises an alert.
+Is the application down?
+Based on the information provided:
+No evidence of pod crashes.
+No evidence of restarts.
+No evidence of service outage.
+Therefore, this appears to be a resource sizing issue, not an application outage.
+Recommended Fix
+Review the actual CPU usage (kubectl top pod) and increase the CPU limit to a more appropriate value (for example 100m or higher, depending on usage patterns).
+Final Summary
+The root cause of the alert is that trident-operator is configured with a very low CPU limit (20m). During normal periodic operations, the workload needs more CPU than allowed, so Kubernetes throttles it. Dynatrace detects this throttling and generates the alert. The issue is most likely resolved by increasing the CPU limit after validating actual CPU consumption.
