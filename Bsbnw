@@ -1,0 +1,1 @@
+type: {{ if eq .pathType "Prefix" }}PathPrefix{{ else if eq .pathType "Exact" }}Exact{{ else if contains "(" .path }}RegularExpression{{ else }}Exact{{ end }}
