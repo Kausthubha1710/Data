@@ -84,17 +84,21 @@ if (isEvidenceValid && isVersionValid) {
 
 
 
-const componentField = context.panel.elements.find((el) => el.id === 'component');
 
-if (componentField && !componentField.value) {
-  if (typeof context.panel.setFieldValue === 'function') {
-    context.panel.setFieldValue('component', 'APP');
-  } else if (typeof context.panel.updateField === 'function') {
-    context.panel.updateField('component', 'APP');
-  } else if (typeof componentField.onChange === 'function') {
-    componentField.onChange('APP');
-  } else {
-    componentField.value = 'APP'; // last resort, likely won't repaint
-  }
+
+const componentField = context.panel.elements.find(
+    (el) => el.id === 'component'
+);
+
+if (
+    componentField &&
+    (
+        componentField.value === undefined ||
+        componentField.value === null ||
+        componentField.value === '' ||
+        componentField.value === 'Choose' ||
+        componentField.value === 'Undefined'
+    )
+) {
+    componentField.setValue('APP'); // if setValue exists
 }
-
