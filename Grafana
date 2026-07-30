@@ -1,0 +1,62 @@
+const signoffEvidenceMap = new Map([
+  ['uat signoff', 'uat signoff evidence'],
+  ['perf signoff', 'perf signoff evidence'],
+  ['staging signoff', 'staging signoff evidence'],
+  ['codereview signoff', 'codereview signoff evidence'],
+  ['rollback signoff', 'rollback signoff evidence'],
+  ['security signoff', 'security signoff evidence'],
+  ['gonogo signoff', 'gonogo signoff evidence'],
+  ['implementation signoff', 'implementation signoff evidence'],
+  ['testplan signoff', 'testplan signoff evidence'],
+  ['technical signoff', 'technical signoff evidence']
+]);
+
+const nonSignoffFields = [
+  'ccb submission_date',
+  'ccb approval date',
+  'ccb_region',
+  'release type',
+  'component',
+  'no of jiras',
+  'version number'
+];
+
+let isEvidenceValid = true;
+let value = "";
+
+// Existing validation code...
+
+if (nonSignoffFields.includes(context.element.id)) {
+
+    isEvidenceValid = true;
+
+    const component = context.panel.elements.find(
+        element => element.id === "component"
+    );
+
+    const versionNumber = context.panel.elements.find(
+        element => element.id === "version number"
+    );
+
+    // Default Component = APP
+    if (!component.value || component.value.trim() === "") {
+        component.value = "APP";
+    }
+
+    // Version Number mandatory if Component is not INFRA
+    if (
+        component.value.toUpperCase() !== "INFRA" &&
+        (!versionNumber.value || versionNumber.value.trim() === "")
+    ) {
+        isEvidenceValid = false;
+        value = "Version Number is mandatory when Component is not INFRA.";
+    }
+}
+
+if (isEvidenceValid) {
+    context.panel.enableSubmit();
+    context.panel.setError(null);
+} else {
+    context.panel.disableSubmit();
+    context.panel.setError(value);
+}
