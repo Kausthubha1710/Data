@@ -152,3 +152,19 @@ component = CASE
               THEN 'APP'
               ELSE '${payload.component}'
             END,
+
+
+
+
+
+
+
+
+
+
+
+context.panel.elements.forEach((el) => {
+    console.log(el.id, el.value);
+});
+
+return;
