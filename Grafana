@@ -102,3 +102,34 @@ if (
 ) {
     componentField.setValue('APP'); // if setValue exists
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const componentField = context.panel.elements.find(
+    (el) => el.id === 'component'
+);
+
+console.log("Field:", componentField);
+console.log("Value:", componentField?.value);
+console.log("Type:", typeof componentField?.value);
+
+context.panel.elements.forEach((el) => {
+    console.log(el.id, el.value);
+});
