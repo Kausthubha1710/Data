@@ -84,12 +84,17 @@ if (isEvidenceValid && isVersionValid) {
 
 
 
-
 const componentField = context.panel.elements.find((el) => el.id === 'component');
+
 if (componentField && !componentField.value) {
-  if (typeof context.panel.setValue === 'function') {
-    context.panel.setValue('component', 'APP');
+  if (typeof context.panel.setFieldValue === 'function') {
+    context.panel.setFieldValue('component', 'APP');
+  } else if (typeof context.panel.updateField === 'function') {
+    context.panel.updateField('component', 'APP');
+  } else if (typeof componentField.onChange === 'function') {
+    componentField.onChange('APP');
   } else {
-    componentField.value = 'APP';
+    componentField.value = 'APP'; // last resort, likely won't repaint
   }
 }
+
