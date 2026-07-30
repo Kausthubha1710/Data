@@ -133,3 +133,22 @@ console.log("Type:", typeof componentField?.value);
 context.panel.elements.forEach((el) => {
     console.log(el.id, el.value);
 });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+component = CASE
+              WHEN '${payload.component}' IN ('', 'Choose', 'undefined')
+              THEN 'APP'
+              ELSE '${payload.component}'
+            END,
