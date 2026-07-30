@@ -1,62 +1,82 @@
 const signoffEvidenceMap = new Map([
-  ['uat signoff', 'uat signoff evidence'],
-  ['perf signoff', 'perf signoff evidence'],
-  ['staging signoff', 'staging signoff evidence'],
-  ['codereview signoff', 'codereview signoff evidence'],
-  ['rollback signoff', 'rollback signoff evidence'],
-  ['security signoff', 'security signoff evidence'],
-  ['gonogo signoff', 'gonogo signoff evidence'],
-  ['implementation signoff', 'implementation signoff evidence'],
-  ['testplan signoff', 'testplan signoff evidence'],
-  ['technical signoff', 'technical signoff evidence']
+  ['uat_signoff', 'uat_signoff_evidence'],
+  ['perf_signoff', 'perf_signoff_evidence'],
+  ['staging_signoff', 'staging_signoff_evidence'],
+  ['codereview_signoff', 'codereview_signoff_evidence'],
+  ['rollback_signoff', 'rollback_signoff_evidence'],
+  ['security_signoff', 'security_signoff_evidence'],
+  ['gonogo_signoff', 'gonogo_signoff_evidence'],
+  ['implementation_signoff', 'implementation_signoff_evidence'],
+  ['testplan_signoff', 'testplan_signoff_evidence'],
+  ['technical_signoff', 'technical_signoff_evidence']
 ]);
 
 const nonSignoffFields = [
-  'ccb submission_date',
-  'ccb approval date',
+  'ccb_submission_date',
+  'ccb_approval_date',
   'ccb_region',
-  'release type',
+  'release_type',
   'component',
-  'no of jiras',
-  'version number'
+  'no_of_jiras',
+  'version_number'
 ];
 
-let isEvidenceValid = true;
-let value = "";
-
-// Existing validation code...
-
-if (nonSignoffFields.includes(context.element.id)) {
-
-    isEvidenceValid = true;
-
-    const component = context.panel.elements.find(
-        element => element.id === "component"
-    );
-
-    const versionNumber = context.panel.elements.find(
-        element => element.id === "version number"
-    );
-
-    // Default Component = APP
-    if (!component.value || component.value.trim() === "") {
-        component.value = "APP";
-    }
-
-    // Version Number mandatory if Component is not INFRA
-    if (
-        component.value.toUpperCase() !== "INFRA" &&
-        (!versionNumber.value || versionNumber.value.trim() === "")
-    ) {
-        isEvidenceValid = false;
-        value = "Version Number is mandatory when Component is not INFRA.";
-    }
+function hasUniqueWords(text) {
+  if (!text) return false;
+  const words = text.toLowerCase().match(/\b\w+\b/g);
+  if (!words) return false;
+  const uniqueWords = new Set(words);
+  return uniqueWords.size >= 5;
 }
 
-if (isEvidenceValid) {
-    context.panel.enableSubmit();
-    context.panel.setError(null);
+const signoffFieldsList = Array.from(signoffEvidenceMap.keys());
+const evidenceFieldsList = Array.from(signoffEvidenceMap.values());
+
+// --- New rule 1: default component to APP if unset ---
+const componentField = context.panel.elements.find((el) => el.id === 'component');
+if (componentField && !componentField.value) {
+  componentField.value = 'APP';
+}
+
+// --- New rule 2: version number mandatory unless component is INFRA ---
+const versionField = context.panel.elements.find((el) => el.id === 'version_number');
+let isVersionValid = true;
+if (componentField && componentField.value !== 'INFRA') {
+  isVersionValid = !!(versionField && versionField.value && versionField.value.trim().length > 0);
+}
+
+// --- Evidence validation ---
+let isEvidenceValid = true;
+let value = '';
+
+if (signoffFieldsList.includes(context.element.id)) {
+  // A signoff dropdown changed — look up its paired evidence field
+  const evidence = context.panel.elements.find(
+    (element) => element.id === signoffEvidenceMap.get(context.element.id)
+  );
+  value = evidence ? evidence.value : '';
+  isEvidenceValid = hasUniqueWords(value);
+
+} else if (evidenceFieldsList.includes(context.element.id)) {
+  // An evidence field itself changed
+  value = context.element.value;
+  isEvidenceValid = hasUniqueWords(value);
+
+} else if (nonSignoffFields.includes(context.element.id)) {
+  // These fields don't require evidence validation
+  isEvidenceValid = true;
+}
+
+// --- Combine both checks before enabling submit ---
+if (isEvidenceValid && isVersionValid) {
+  context.panel.enableSubmit();
+  context.panel.setError(null);
+} else if (!isVersionValid) {
+  context.panel.setError('Version Number is mandatory when Component is not INFRA.');
+  context.panel.disableSubmit();
 } else {
-    context.panel.disableSubmit();
-    context.panel.setError(value);
+  context.panel.setError(
+    'Please ensure you give valid evidence explanation, with minimum 5 unique tokens, before changing the signoff state: ' + value
+  );
+  context.panel.disableSubmit();
 }
