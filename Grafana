@@ -168,3 +168,44 @@ context.panel.elements.forEach((el) => {
 });
 
 return;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const componentField = context.panel.elements.find(
+    (el) => el.id === 'component'
+);
+
+if (componentField && componentField.value === 'Undefined') {
+    componentField.setValue('APP');
+}
+
+context.panel.elements.forEach((el) => {
+    console.log(el.id, el.value);
+});
+
+
+
+
+
+
+const componentField = context.panel.elements.find(
+    (el) => el.id === 'component'
+);
+
+if (componentField && componentField.value === 'Undefined') {
+    componentField.value = 'APP';
+    componentField.refresh();
+}
