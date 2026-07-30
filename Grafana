@@ -80,3 +80,16 @@ if (isEvidenceValid && isVersionValid) {
   );
   context.panel.disableSubmit();
 }
+
+
+
+
+
+const componentField = context.panel.elements.find((el) => el.id === 'component');
+if (componentField && !componentField.value) {
+  if (typeof context.panel.setValue === 'function') {
+    context.panel.setValue('component', 'APP');
+  } else {
+    componentField.value = 'APP';
+  }
+}
