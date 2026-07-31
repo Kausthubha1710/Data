@@ -209,3 +209,25 @@ if (componentField && componentField.value === 'Undefined') {
     componentField.value = 'APP';
     componentField.refresh();
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const componentField = context.panel.elements.find(
+    (el) => el.id === 'component'
+);
+
+console.log(componentField);
+
+return;
