@@ -231,3 +231,24 @@ const componentField = context.panel.elements.find(
 console.log(componentField);
 
 return;
+
+
+
+
+
+
+
+
+
+
+const componentField = context.panel.elements.find(
+    (el) => el.id === 'component'
+);
+
+console.log('Before:', componentField.value);
+
+if (componentField.value === 'Undefined') {
+    componentField.value = 'APP';
+}
+
+console.log('After:', componentField.value);
