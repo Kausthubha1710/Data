@@ -1,0 +1,59 @@
+problems = pd.concat(
+    [emea1_problems_df, amer_problems_df, apac_problems_df],
+    ignore_index=True
+)
+
+# ---------------------------------------------------------
+# COMMENTS
+# ---------------------------------------------------------
+# Initialize comments as NULL for every problem.
+# If recentComments exists, we will populate this column.
+problems["comments"] = None
+
+if "recentComments" in problems.columns:
+
+    problems["comments"] = problems["recentComments"].apply(
+        lambda x: (
+            x.get("comments")
+            if isinstance(x, dict) and x.get("comments")
+            else None
+        )
+    )
+
+    # recentComments is only used to extract comments.
+    # We don't need to store recentComments separately.
+    problems.drop(columns=["recentComments"], inplace=True)
+
+
+# ---------------------------------------------------------
+# EXISTING JSON COLUMNS
+# ---------------------------------------------------------
+problems["affectedEntities"].apply(json.dumps)
+problems["impactedEntities"].apply(json.dumps)
+problems["rootCauseEntity"].apply(json.dumps)
+problems["managementZones"].apply(json.dumps)
+problems["entityTags"].apply(json.dumps)
+problems["problemFilters"].apply(json.dumps)
+
+
+# ---------------------------------------------------------
+# EXISTING PROBLEM ID PROCESSING
+# ---------------------------------------------------------
+problems.rename(
+    columns={
+        'problemId': "problem_id",
+        'displayId': 'display_id'
+    },
+    inplace=True
+)
+
+problems.drop_duplicates(
+    subset=['problem_id'],
+    keep='last',
+    inplace=True
+)
+
+problems.set_index(
+    ['problem_id', 'display_id'],
+    inplace=True
+)
