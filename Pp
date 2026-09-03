@@ -1,0 +1,113 @@
+@Library('dbce-aps-lib@bugfix/process-plus-travel-portal') _
+
+node('bnpp-citools') {
+
+    stage('Pre-Authentication') {
+
+        withCredentials([
+            usernamePassword(
+                credentialsId: 'artifactory-service-account',
+                usernameVariable: 'USER',
+                passwordVariable: 'PASS'
+            )
+        ]) {
+
+            script {
+
+                echo 'Authenticating with CIBDBBCE Docker registry...'
+
+                def loginStatus = sh(
+                    script: '''
+                        set -e
+
+                        echo "$PASS" | docker login \
+                            --username "$USER" \
+                            --password-stdin \
+                            cibdbbce-docker-local-dev.artifactory.cib.echonet:8081
+                    ''',
+                    returnStatus: true
+                )
+
+                if (loginStatus != 0) {
+                    error 'FAILURE: Docker login to CIBDBBCE registry failed!'
+                }
+
+                echo 'SUCCESS: Authenticated successfully with CIBDBBCE Docker registry.'
+            }
+        }
+    }
+
+
+    stage('Verify Base Image Access') {
+
+        script {
+
+            echo 'Verifying access to CIBDBBCE base image...'
+
+            def pullStatus = sh(
+                script: '''
+                    docker pull \
+                        cibdbbce-docker-local-dev.artifactory.cib.echonet/bnpp/node:22.13.0
+                ''',
+                returnStatus: true
+            )
+
+            if (pullStatus != 0) {
+                error '''
+FAILURE: Unable to pull the CIBDBBCE base image.
+
+Image:
+cibdbbce-docker-local-dev.artifactory.cib.echonet/bnpp/node:22.13.0
+
+Please verify that the artifactory-service-account has READ permission
+on the CIBDBBCE Docker repository.
+'''
+            }
+
+            echo 'SUCCESS: CIBDBBCE base image is accessible.'
+        }
+    }
+
+
+    stage('Run npmPipeline') {
+
+        npmPipeline {
+
+            // NPM Artifactory
+            artifactoryRepo = "camundacoe-npm"
+
+            // Credentials used by npmPipeline
+            artifactoryCredentialsId = "artifactory-service-account"
+
+            // NPM options
+            npmArgs = "--production"
+
+            // Skip tests
+            skipTests = true
+
+            // Enable Docker build
+            docker = true
+
+            // Docker image name
+            imageName = "camundacoe/2s-business-acceptance-process-ui"
+
+            // Docker destination repository
+            // This is the PUSH repository.
+            artifactoryDockerRepo = "camundacoe-docker"
+
+            // SonarQube
+            sonarqube = true
+
+            sonarqubeCredentialsId = "Sonar-camundacoe_DCE_token"
+
+            // Ecosystem
+            ecosystem = "camundacoe"
+
+            // Project
+            projectName = "2s-business-acceptance-process"
+
+            // Notification
+            emailTo = "chandrashekar.mallikarjun@asia.bnpparibas.com"
+        }
+    }
+}
