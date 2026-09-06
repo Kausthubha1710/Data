@@ -1,58 +1,41 @@
-def _get_problem_per_mz(self, mzs, full_sync=False):
-    selector = '","'.join([f'"{it["name"]}"' for it in mzs])
-    environment = mzs[0]['environment']
-    region = mzs[0]['region']
+elif response.status_code == 401:
+    logging.warning(
+        "Dynatrace API returned 401. Refreshing token. URL: %s",
+        url
+    )
+
+    self.tokens.get(environment, {}).pop(region, None)
 
     headers = {
         'Accept': 'application/json',
-        'Authorization': 'Bearer ' + self._get_api_token(environment, region)
+        'Authorization': 'Bearer ' + self._get_api_token(
+            environment=environment,
+            region=region
+        )
     }
 
-    if full_sync or self.config.get_config()['dynatrace']['sync_problems_full_sync']:
-        from_date = str(
-            self.config.get_config()['dynatrace']['sync_problems_year_start']
-        ) + "-01-01T00:00:00"
-    else:
-        from_date = "now-2h"
-
-    problem_url = (
-        "https://" +
-        self.config.get_config()['dynatrace'][environment][region]['base_url']
-    )
-
-    problem_url += (
-        self.config.get_config()['dynatrace'][environment][region]['environment_api']
-        + f'/v2/problems?'
-        + f'problemSelector=managementZones("{selector}")'
-        + f'&pageSize=250'
-        + f'&from={from_date}'
-        + f'&fields=recentComments'
-    )
-
-    problems = self._get_request_result(
-        url=problem_url,
+    return self._get_request_result(
+        url=url,
         headers=headers,
-        keypair=self.config.get_dynatrace_cert(env=environment),
-        parser="problems",
+        keypair=keypair,
+        parser=parser,
         environment=environment,
         region=region
     )
 
-    problems["region"] = region
-    problems["environment"] = environment
-
-    return problems
-
-
-
-# 7. DATA PROCESSING
-
-problems["comments"] = None
-
-if "recentComments" in problems.columns:
-
-    problems["comments"] = problems["recentComments"].apply(
-        lambda x: x.get("comments") if isinstance(x, dict) else None
+else:
+    logging.error(
+        "Dynatrace API FAILED"
     )
-
-    problems.drop(columns=["recentComments"], inplace=True)
+    logging.error(
+        "Status code: %s",
+        response.status_code
+    )
+    logging.error(
+        "URL: %s",
+        url
+    )
+    logging.error(
+        "Response: %s",
+        response.text[:2000]
+    )
