@@ -42,3 +42,17 @@ def _get_problem_per_mz(self, mzs, full_sync=False):
     problems["environment"] = environment
 
     return problems
+
+
+
+# 7. DATA PROCESSING
+
+problems["comments"] = None
+
+if "recentComments" in problems.columns:
+
+    problems["comments"] = problems["recentComments"].apply(
+        lambda x: x.get("comments") if isinstance(x, dict) else None
+    )
+
+    problems.drop(columns=["recentComments"], inplace=True)
