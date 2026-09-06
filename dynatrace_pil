@@ -1,39 +1,35 @@
-problems = pd.concat(
-    [emea1_problems_df, amer_problems_df, apac_problems_df],
-    ignore_index=True
-)
+def robust_comment_search(row):
+    for col in row.index:
+        col_str = str(col)
+        if "recentComments" in col_str or "comments" in col_str:
+            val = row[col]
+            if pd.isna(val) or val is None:
+                continue
+            
+            # 1. Flattened list from pd.json_normalize
+            if isinstance(val, list) and len(val) > 0:
+                first_item = val[0]
+                if isinstance(first_item, dict):
+                    return first_item.get('content')
+                return str(first_item)
 
-# ---------------------------------------------------------
-# COMMENTS
-# ---------------------------------------------------------
-# Initialize comments as NULL for every problem.
-# If recentComments exists, we will populate this column.
-problems["comments"] = None
+            # 2. Nested dictionary
+            elif isinstance(val, dict):
+                comments_list = val.get('comments', [])
+                if isinstance(comments_list, list) and len(comments_list) > 0:
+                    return comments_list[0].get('content')
 
-if "recentComments" in problems.columns:
-
-    problems["comments"] = problems["recentComments"].apply(
-        lambda x: (
-            x.get("comments")
-            if isinstance(x, dict) and x.get("comments")
-            else None
-        )
-    )
-
-    # recentComments is only used to extract comments.
-    # We don't need to store recentComments separately.
-    problems.drop(columns=["recentComments"], inplace=True)
-
-
-# ---------------------------------------------------------
-# EXISTING JSON COLUMNS
-# ---------------------------------------------------------
-problems["affectedEntities"].apply(json.dumps)
-problems["impactedEntities"].apply(json.dumps)
-problems["rootCauseEntity"].apply(json.dumps)
-problems["managementZones"].apply(json.dumps)
-problems["entityTags"].apply(json.dumps)
-problems["problemFilters"].apply(json.dumps)
+            # 3. Raw JSON string
+            elif isinstance(val, str) and val.startswith('{'):
+                try:
+                    data = json.loads(val)
+                    if isinstance(data, dict):
+                        comments_list = data.get('comments', [])
+                        if isinstance(comments_list, list) and len(comments_list) > 0:
+                            return comments_list[0].get('content')
+                except Exception:
+                    pass
+    return None
 
 
 # ---------------------------------------------------------
@@ -57,3 +53,15 @@ problems.set_index(
     ['problem_id', 'display_id'],
     inplace=True
 )
+
+
+
+
+
+
+
+# Keep comments as a clean Python string/object for JSONB
+if "comments" in problems.columns:
+    problems["comments"] = problems["comments"].apply(
+        lambda x: x if pd.notna(x) and x is not None else None
+    )
