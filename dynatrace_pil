@@ -1,41 +1,56 @@
-elif response.status_code == 401:
-    logging.warning(
-        "Dynatrace API returned 401. Refreshing token. URL: %s",
-        url
+if response.status_code == 200:
+    if parser is not None:
+        data = response.json()[parser]
+    else:
+        data = response.json()
+
+    # ===== DEBUG RECENT COMMENTS =====
+    if parser == "problems":
+        print("===== DEBUG RECENT COMMENTS =====")
+        for problem in data[:10]:
+            print(
+                "PROBLEM:",
+                problem.get("problemId"),
+                "RECENT COMMENTS:",
+                problem.get("recentComments")
+            )
+        print("=================================")
+    # ==================================
+
+    page = pd.json_normalize(data, max_level=0)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 7. DATA PROCESSING
+# Initialize comments column
+problems["comments"] = None
+
+if "recentComments" in problems.columns:
+    problems["comments"] = problems["recentComments"].apply(
+        lambda x: x.get("comments")
+        if isinstance(x, dict)
+        else None
     )
 
-    self.tokens.get(environment, {}).pop(region, None)
+    problems.drop(columns=["recentComments"], inplace=True)
 
-    headers = {
-        'Accept': 'application/json',
-        'Authorization': 'Bearer ' + self._get_api_token(
-            environment=environment,
-            region=region
-        )
-    }
+print("===== COMMENTS AFTER EXTRACTION =====")
 
-    return self._get_request_result(
-        url=url,
-        headers=headers,
-        keypair=keypair,
-        parser=parser,
-        environment=environment,
-        region=region
-    )
+print(
+    problems[
+        ["problemId", "comments"]
+    ].head(10).to_string()
+)
 
-else:
-    logging.error(
-        "Dynatrace API FAILED"
-    )
-    logging.error(
-        "Status code: %s",
-        response.status_code
-    )
-    logging.error(
-        "URL: %s",
-        url
-    )
-    logging.error(
-        "Response: %s",
-        response.text[:2000]
-    )
+print("====================================")
