@@ -1,56 +1,8 @@
-if response.status_code == 200:
-    if parser is not None:
-        data = response.json()[parser]
-    else:
-        data = response.json()
-
-    # ===== DEBUG RECENT COMMENTS =====
-    if parser == "problems":
-        print("===== DEBUG RECENT COMMENTS =====")
-        for problem in data[:10]:
-            print(
-                "PROBLEM:",
-                problem.get("problemId"),
-                "RECENT COMMENTS:",
-                problem.get("recentComments")
-            )
-        print("=================================")
-    # ==================================
-
-    page = pd.json_normalize(data, max_level=0)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# 7. DATA PROCESSING
-# Initialize comments column
-problems["comments"] = None
-
-if "recentComments" in problems.columns:
-    problems["comments"] = problems["recentComments"].apply(
-        lambda x: x.get("comments")
-        if isinstance(x, dict)
-        else None
-    )
-
-    problems.drop(columns=["recentComments"], inplace=True)
-
-print("===== COMMENTS AFTER EXTRACTION =====")
-
-print(
-    problems[
-        ["problemId", "comments"]
-    ].head(10).to_string()
-)
-
-print("====================================")
+if parser == "problems":
+    for problem in data:
+        if problem.get("recentComments"):
+            print("\n===== FOUND A COMMENT =====")
+            print("Problem ID:", problem.get("problemId"))
+            print("Recent Comments:", problem.get("recentComments"))
+            print("===========================\n")
+            break
