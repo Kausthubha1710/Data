@@ -1,109 +1,90 @@
-def call(body) {
-    def pipelineParams = [:]
-    body.resolveStrategy = Closure.DELEGATE_FIRST
-    body.delegate = pipelineParams
-    body()
+def _get_request_result(
+    self,
+    url,
+    headers,
+    keypair,
+    parser="values",
+    environment=None,
+    region="emea",
+    fields=None,                              # <-- NEW parameter
+):
+    try:
+        if environment is None:
+            environment = os.environ.get("ENVIRONMENT", "dev").lower()
+        response = self.http_requests.request(
+            "GET",
+            url,
+            headers=headers,
+            verify=self.config.get_ca_cert(),
+            cert=keypair,
+            timeout=300,
+        )
 
-    def buildNo = currentBuild.displayName
-    currentBuild.displayName += ">${pipelineParams.ecosystem}>${params.database}>${params.action}"
-    currentBuild.description = "Build: ${buildNo} | ${params.operation}"
+        if response.status_code == 200:
+            if parser is not None:
+                data = response.json()[parser]
+            else:
+                data = response.json()
+            page = pd.json_normalize(data, max_level=0)
 
-    def cyberarkCert  = pipelineParams.cyberarkCertFile
-    def cyberarkKey   = pipelineParams.cyberarkKeyFile
-    def cyberarkCA    = pipelineParams.cyberarkCAFile
-    def cyberarkAppId = pipelineParams.cyberarkAppId
-    def safeId        = pipelineParams.cyberarkSafe
-    def region        = pipelineParams.region == null ? "EMEA" : pipelineParams.region
+            if (
+                "nextPageKey" in response.json()
+                and response.json()["nextPageKey"] is not None
+            ):
+                next_page_url = (
+                    url.split("?")[0]
+                    + "?nextPageKey="
+                    + response.json()["nextPageKey"]
+                )
+                if fields:                                # <-- NEW: only added when caller asked for it
+                    next_page_url += f"&fields={fields}"  # <-- NEW: correct "=" and re-sent every page
 
-    if (env.JENKINS_URL.contains("-aps-")) {
-        cyberarkCert  = pipelineParams.cyberarkCertFileProd
-        cyberarkKey   = pipelineParams.cyberarkKeyFileProd
-        cyberarkAppId = params.cyberarkAppIProd
-        safeId        = pipelineParams.cyberarkSafeProd
-    }
+                next_page = self._get_request_result(
+                    url=next_page_url,
+                    headers=headers,
+                    keypair=keypair,
+                    parser=parser,
+                    fields=fields,                         # <-- NEW: propagate through recursion
+                )
 
-    timestamps {
-        ansiColor('xterm') {
-            def agentName = "bnpp-buildtools"
-            if (pipelineParams.agent != null) {
-                agentName = pipelineParams.agent
+                page = pd.concat(
+                    [page, next_page], ignore_index=True
+                )
+
+            return page
+
+        elif response.status_code == 401:
+            logging.warning(
+                "Dynatrace API returned 401. Refreshing token. URL: %s",
+                url,
+            )
+
+            self.tokens.get(environment, {}).pop(region, None)
+
+            headers = {
+                "Accept": "application/json",
+                "Authorization": "Bearer "
+                + self._get_api_token(
+                    environment=environment, region=region
+                ),
             }
 
-            node(agentName) {
-                withEnv(['LOG_APP=' + pipelineParams.ecosystem,
-                         'LOG_ENV=' + params.database]) {
+            return self._get_request_result(
+                url=url,
+                headers=headers,
+                keypair=keypair,
+                parser=parser,
+                environment=environment,
+                fields=fields,                             # <-- NEW: keep it on 401-retry too
+            )
+        else:
+            logging.error("Dynatrace API FAILED")
+            logging.error("Status code: %s", response.status_code)
+            logging.error("URL: %s", url)
+            logging.error("Response: %s", response.text[:2000])
 
-                    try {
-                        stage('Initialize') {
-                            initializeSqlPipelineParameters(pipelineParams.ecosystem, pipelineParams.envList)
-                        }
+    except Exception as error:
+        logging.warning(url)
+        logging.debug(error)
 
-                        // -------------------------------------------------------
-                        // GUARD: Stop here on first run (parameter registration).
-                        // params.database is null/empty until the user has
-                        // actually filled in the form and clicked Build.
-                        // -------------------------------------------------------
-                        if (!params.database || params.database == 'NONE') {
-                            echo "Parameters registered. Please trigger the build again with your selections."
-                            currentBuild.result = 'NOT_BUILT'
-                            return
-                        }
-
-                        // Only reaches here on a real triggered build
-                        def credentialMap = pipelineParams.dbCredentialMap
-
-                        if (!credentialMap) {
-                            error "dbCredentialMap not defined in Jenkinsfile"
-                        }
-
-                        if (!credentialMap.containsKey(params.database)) {
-                            error "No credential mapped for environment: ${params.database}"
-                        }
-
-                        def accountId = credentialMap[params.database]
-                        echo "Environment '${params.database}' mapped to Credential '${accountId}'"
-
-                        stage('Checkout') {
-                            checkout scm
-                            hook.loadExternalHooks()
-                            hook('postCheckout', this)
-                        }
-
-                        stage('Database Change Execution') {
-                            try {
-                                def changefile = params.changelogfile ?: pipelineParams.dbchangelogfile
-
-                                def fetch_secret    = cyberarkSecret(cyberarkCert, cyberarkKey, cyberarkCA, region, safeId, cyberarkAppId, accountId)
-                                def cyberark_username = fetch_secret['UserName'].toString()
-                                def cyberark_password = fetch_secret['Content'].toString()
-
-                                echo "The changelogfile to be executed is ------>>>>>>>>>>>>> ${changefile}"
-
-                                wrap([$class: 'MaskPasswordsBuildWrapper',
-                                      varPasswordPairs: [
-                                          [password: cyberark_password, var: 'PASSWORD_SECRET'],
-                                          [password: cyberark_username, var: 'USERNAME_SECRET']
-                                      ]]) {
-                                    executeliquibase(pipelineParams.ecosystem, params.action, params.operation, params.database, params.tag_value, params.count, params.date, params.tag, changefile, cyberark_username, cyberark_password)
-                                }
-                            } catch (Exception e) {
-                                currentBuild.result = 'FAILURE'
-                                echo "Execution failed"
-                                throw e
-                            }
-                        }
-
-                    } catch (Exception e) {
-                        currentBuild.result = 'FAILURE'
-                        throw e
-                    } finally {
-                        stage('Terminate') {
-                            notifyUser(pipelineParams.ecosystem, params.database, pipelineParams.emailto)
-                            echo "End of the Pipeline"
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
+    return page
