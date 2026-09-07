@@ -1,90 +1,50 @@
-def _get_request_result(
-    self,
-    url,
-    headers,
-    keypair,
-    parser="values",
-    environment=None,
-    region="emea",
-    fields=None,                              # <-- NEW parameter
-):
-    try:
-        if environment is None:
-            environment = os.environ.get("ENVIRONMENT", "dev").lower()
-        response = self.http_requests.request(
-            "GET",
-            url,
-            headers=headers,
-            verify=self.config.get_ca_cert(),
-            cert=keypair,
-            timeout=300,
+if response.status_code == 200:
+    if parser is not None:
+        data = response.json()[parser]
+    else:
+        data = response.json()
+
+    if parser == "problems":
+        for problem in data:
+            if (
+                "recentComments" in problem
+                and problem["recentComments"].get("totalCount", 0) > 0
+            ):
+                print("\n===== FOUND A COMMENT =====")
+                print("Problem ID:", problem.get("problemId"))
+                print(
+                    "Recent Comments:",
+                    problem.get("recentComments")
+                )
+
+    page = pd.json_normalize(data, max_level=0)
+
+    if (
+        "nextPageKey" in response.json()
+        and response.json()["nextPageKey"] is not None
+    ):
+        next_page_url = (
+            url.split("?")[0]
+            + "?nextPageKey="
+            + response.json()["nextPageKey"]
         )
 
-        if response.status_code == 200:
-            if parser is not None:
-                data = response.json()[parser]
-            else:
-                data = response.json()
-            page = pd.json_normalize(data, max_level=0)
+        if fields:
+            next_page_url += f"&fields={fields}"
 
-            if (
-                "nextPageKey" in response.json()
-                and response.json()["nextPageKey"] is not None
-            ):
-                next_page_url = (
-                    url.split("?")[0]
-                    + "?nextPageKey="
-                    + response.json()["nextPageKey"]
-                )
-                if fields:                                # <-- NEW: only added when caller asked for it
-                    next_page_url += f"&fields={fields}"  # <-- NEW: correct "=" and re-sent every page
+        next_page = self._get_request_result(
+            url=next_page_url,
+            headers=headers,
+            keypair=keypair,
+            parser=parser,
+            environment=environment,
+            region=region,
+            fields=fields,
+        )
 
-                next_page = self._get_request_result(
-                    url=next_page_url,
-                    headers=headers,
-                    keypair=keypair,
-                    parser=parser,
-                    fields=fields,                         # <-- NEW: propagate through recursion
-                )
-
-                page = pd.concat(
-                    [page, next_page], ignore_index=True
-                )
-
-            return page
-
-        elif response.status_code == 401:
-            logging.warning(
-                "Dynatrace API returned 401. Refreshing token. URL: %s",
-                url,
-            )
-
-            self.tokens.get(environment, {}).pop(region, None)
-
-            headers = {
-                "Accept": "application/json",
-                "Authorization": "Bearer "
-                + self._get_api_token(
-                    environment=environment, region=region
-                ),
-            }
-
-            return self._get_request_result(
-                url=url,
-                headers=headers,
-                keypair=keypair,
-                parser=parser,
-                environment=environment,
-                fields=fields,                             # <-- NEW: keep it on 401-retry too
-            )
-        else:
-            logging.error("Dynatrace API FAILED")
-            logging.error("Status code: %s", response.status_code)
-            logging.error("URL: %s", url)
-            logging.error("Response: %s", response.text[:2000])
-
-    except Exception as error:
-        logging.warning(url)
-        logging.debug(error)
+        page = pd.concat(
+            [page, next_page],
+            ignore_index=True
+        )
 
     return page
