@@ -1,86 +1,79 @@
-if response.status_code == 200:
-    if parser is not None:
-        data = response.json()[parser]
-    else:
-        data = response.json()
+def _get_request_result(
+    self,
+    url,
+    headers,
+    keypair,
+    parser="values",
+    environment=None,
+    region="emea",
+    fields=None,
+    page_num=1,                                    # <-- NEW: track which page this call is
+):
+    try:
+        if environment is None:
+            environment = os.environ.get("ENVIRONMENT", "dev").lower()
+        response = self.http_requests.request(
+            "GET", url, headers=headers,
+            verify=self.config.get_ca_cert(), cert=keypair, timeout=300,
+        )
 
-    if parser == "problems":
-        for problem in data:
-            if (
-                "recentComments" in problem
-                and problem["recentComments"].get("totalCount", 0) > 0
-            ):
-                print("\n===== FOUND A COMMENT =====")
-                print("Problem ID:", problem.get("problemId"))
-                print(
-                    "Recent Comments:",
-                    problem.get("recentComments")
+        if response.status_code == 200:
+            if parser is not None:
+                data = response.json()[parser]
+            else:
+                data = response.json()
+            page = pd.json_normalize(data, max_level=0)
+
+            # <-- NEW: per-page visibility
+            if parser == "problems":
+                n_with_comments = 0
+                if "recentComments" in page.columns:
+                    n_with_comments = page["recentComments"].apply(
+                        lambda x: isinstance(x, dict) and bool(x.get("comments"))
+                    ).sum()
+                logging.warning(
+                    "PAGE %s | rows=%s | rows_with_comments=%s | has_recentComments_col=%s",
+                    page_num, len(page), n_with_comments, "recentComments" in page.columns,
                 )
 
-    page = pd.json_normalize(data, max_level=0)
+            if (
+                "nextPageKey" in response.json()
+                and response.json()["nextPageKey"] is not None
+            ):
+                next_page_url = url.split("?")[0] + "?nextPageKey=" + response.json()["nextPageKey"]
+                if fields:
+                    next_page_url += f"&fields={fields}"
 
-    if (
-        "nextPageKey" in response.json()
-        and response.json()["nextPageKey"] is not None
-    ):
-        next_page_url = (
-            url.split("?")[0]
-            + "?nextPageKey="
-            + response.json()["nextPageKey"]
-        )
+                next_page = self._get_request_result(
+                    url=next_page_url, headers=headers, keypair=keypair,
+                    parser=parser, fields=fields,
+                    page_num=page_num + 1,           # <-- NEW: increment for next recursive call
+                )
+                page = pd.concat([page, next_page], ignore_index=True)
 
-        if fields:
-            next_page_url += f"&fields={fields}"
-
-        next_page = self._get_request_result(
-            url=next_page_url,
-            headers=headers,
-            keypair=keypair,
-            parser=parser,
-            environment=environment,
-            region=region,
-            fields=fields,
-        )
-
-        page = pd.concat(
-            [page, next_page],
-            ignore_index=True
-        )
-
-    return page
+            return page
+        ...
 
 
 
 
 
-
-
-
-
-
-
-
-
-
-if parser == "problems":
-    problems_with_comments = 0
-    total_comments = 0
-
-    for problem in data:
-        recent_comments = problem.get("recentComments")
-
-        if isinstance(recent_comments, dict):
-            comment_count = recent_comments.get("totalCount", 0)
-
-            if comment_count > 0:
-                problems_with_comments += 1
-                total_comments += comment_count
-
-    print(
-        f"\n===== PROBLEMS PAGE {page_number} ====="
+# <-- NEW: sanity check before drop_duplicates/set_index touches anything
+if "recentComments" in problems.columns:
+    total_with_comments = problems["recentComments"].apply(
+        lambda x: isinstance(x, dict) and bool(x.get("comments"))
+    ).sum()
+    logging.warning(
+        "TOTAL after concat: %s rows | %s rows with non-empty recentComments",
+        len(problems), total_with_comments,
     )
-    print("Problems in this page:", len(data))
-    print("Problems with comments:", problems_with_comments)
-    print("Total comments in this page:", total_comments)
-    print("Fields requested:", fields)
-    print("URL:", url)
+
+
+
+
+
+if "comments" in problems.columns:
+    logging.warning(
+        "AFTER DEDUP: %s rows | %s rows with non-empty comments",
+        len(problems), problems["comments"].apply(bool).sum(),
+    )
