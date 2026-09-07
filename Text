@@ -48,3 +48,39 @@ if response.status_code == 200:
         )
 
     return page
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+if parser == "problems":
+    problems_with_comments = 0
+    total_comments = 0
+
+    for problem in data:
+        recent_comments = problem.get("recentComments")
+
+        if isinstance(recent_comments, dict):
+            comment_count = recent_comments.get("totalCount", 0)
+
+            if comment_count > 0:
+                problems_with_comments += 1
+                total_comments += comment_count
+
+    print(
+        f"\n===== PROBLEMS PAGE {page_number} ====="
+    )
+    print("Problems in this page:", len(data))
+    print("Problems with comments:", problems_with_comments)
+    print("Total comments in this page:", total_comments)
+    print("Fields requested:", fields)
+    print("URL:", url)
