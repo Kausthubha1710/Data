@@ -1,4 +1,4 @@
-def format_recent_comments(data):
+def format_recent_comments(self, data):
     if not data:
         return None
 
@@ -44,6 +44,10 @@ def format_recent_comments(data):
         )
 
     return "\n\n".join(formatted_comments) or None
+
+
+def synchronize_problems(self):
+    # your existing code...
 
 
 
