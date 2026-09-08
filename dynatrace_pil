@@ -1,8 +1,64 @@
-if parser == "problems":
-    for problem in data:
-        if problem.get("recentComments"):
-            print("\n===== FOUND A COMMENT =====")
-            print("Problem ID:", problem.get("problemId"))
-            print("Recent Comments:", problem.get("recentComments"))
-            print("===========================\n")
-            break
+def format_recent_comments(data):
+    if not data:
+        return None
+
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except json.JSONDecodeError:
+            return data
+
+    if not isinstance(data, dict):
+        return None
+
+    comments = data.get("comments", [])
+
+    if not comments:
+        return None
+
+    formatted_comments = []
+
+    for comment in comments:
+        if not isinstance(comment, dict):
+            continue
+
+        author = comment.get("authorName", "")
+        created_at_timestamp = comment.get("createdAtTimestamp")
+        content = comment.get("content", "")
+
+        if created_at_timestamp:
+            try:
+                created_at = datetime.fromtimestamp(
+                    created_at_timestamp / 1000,
+                    tz=timezone.utc,
+                ).strftime("%Y-%m-%d %H:%M:%S")
+            except (ValueError, TypeError, OverflowError):
+                created_at = str(created_at_timestamp)
+        else:
+            created_at = ""
+
+        formatted_comments.append(
+            f"Author: {author}\n"
+            f"Created At: {created_at}\n"
+            f"Comment: {content}"
+        )
+
+    return "\n\n".join(formatted_comments) or None
+
+
+
+
+
+
+
+
+
+
+
+
+problems = pd.concat(all_problems_list, ignore_index=True)
+
+if "recentComments" in problems.columns:
+    problems["recentComments"] = problems["recentComments"].apply(
+        format_recent_comments
+    )
