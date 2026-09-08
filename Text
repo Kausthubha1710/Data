@@ -1,79 +1,27 @@
-def _get_request_result(
-    self,
-    url,
-    headers,
-    keypair,
-    parser="values",
-    environment=None,
-    region="emea",
-    fields=None,
-    page_num=1,                                    # <-- NEW: track which page this call is
-):
-    try:
-        if environment is None:
-            environment = os.environ.get("ENVIRONMENT", "dev").lower()
-        response = self.http_requests.request(
-            "GET", url, headers=headers,
-            verify=self.config.get_ca_cert(), cert=keypair, timeout=300,
-        )
-
-        if response.status_code == 200:
-            if parser is not None:
-                data = response.json()[parser]
-            else:
-                data = response.json()
-            page = pd.json_normalize(data, max_level=0)
-
-            # <-- NEW: per-page visibility
-            if parser == "problems":
-                n_with_comments = 0
-                if "recentComments" in page.columns:
-                    n_with_comments = page["recentComments"].apply(
-                        lambda x: isinstance(x, dict) and bool(x.get("comments"))
-                    ).sum()
-                logging.warning(
-                    "PAGE %s | rows=%s | rows_with_comments=%s | has_recentComments_col=%s",
-                    page_num, len(page), n_with_comments, "recentComments" in page.columns,
-                )
-
-            if (
-                "nextPageKey" in response.json()
-                and response.json()["nextPageKey"] is not None
-            ):
-                next_page_url = url.split("?")[0] + "?nextPageKey=" + response.json()["nextPageKey"]
-                if fields:
-                    next_page_url += f"&fields={fields}"
-
-                next_page = self._get_request_result(
-                    url=next_page_url, headers=headers, keypair=keypair,
-                    parser=parser, fields=fields,
-                    page_num=page_num + 1,           # <-- NEW: increment for next recursive call
-                )
-                page = pd.concat([page, next_page], ignore_index=True)
-
-            return page
-        ...
-
-
-
-
-
-# <-- NEW: sanity check before drop_duplicates/set_index touches anything
-if "recentComments" in problems.columns:
-    total_with_comments = problems["recentComments"].apply(
-        lambda x: isinstance(x, dict) and bool(x.get("comments"))
-    ).sum()
-    logging.warning(
-        "TOTAL after concat: %s rows | %s rows with non-empty recentComments",
-        len(problems), total_with_comments,
-    )
-
-
-
-
-
-if "comments" in problems.columns:
-    logging.warning(
-        "AFTER DEDUP: %s rows | %s rows with non-empty comments",
-        len(problems), problems["comments"].apply(bool).sum(),
-    )
+SELECT
+    dt."sub_cluster",
+    dt."application",
+    substring(
+        dt."recentComments"
+        FROM 'Comment: (.*)'
+    ) AS "comment"
+FROM (
+    SELECT
+        as2.name AS "sub_cluster",
+        aa.name AS "application",
+        pb."recentComments",
+        pb."startTime"
+    FROM apm_application_daps aad
+    JOIN apm_applications aa
+        ON aa.id = aad.apm_application
+    JOIN apm_subclusters as2
+        ON aa.apm_subcluster = as2.id
+    JOIN dt_problems pb
+        ON pb.goldenapp_auid = aad.goldenapp_auid
+    WHERE aa.id IN ($ApmApplication)
+) dt
+WHERE TO_TIMESTAMP(dt."startTime" / 1000)
+      BETWEEN '${__from:date:YYYY-MM-DD}'
+      AND '${__to:date:YYYY-MM-DD}'
+ORDER BY dt."startTime" DESC
+LIMIT 500;
