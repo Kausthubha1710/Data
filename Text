@@ -2,7 +2,7 @@ select
     dt.*,
     array_to_string(
         array(
-            select (regexp_matches(dt."recentComments", 'Comment:\s*(.*)', 'g'))[1]
+            select (regexp_matches(dt."recentComments", 'Comment:\s*(.*)', 'gn'))[1]
         ),
         E'\n\n'
     ) as "comments_only"
