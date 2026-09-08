@@ -1,27 +1,17 @@
 SELECT
-    dt."sub_cluster",
-    dt."application",
-    substring(
-        dt."recentComments"
-        FROM 'Comment: (.*)'
-    ) AS "comment"
-FROM (
-    SELECT
-        as2.name AS "sub_cluster",
-        aa.name AS "application",
-        pb."recentComments",
-        pb."startTime"
-    FROM apm_application_daps aad
-    JOIN apm_applications aa
-        ON aa.id = aad.apm_application
-    JOIN apm_subclusters as2
-        ON aa.apm_subcluster = as2.id
-    JOIN dt_problems pb
-        ON pb.goldenapp_auid = aad.goldenapp_auid
-    WHERE aa.id IN ($ApmApplication)
-) dt
-WHERE TO_TIMESTAMP(dt."startTime" / 1000)
+    as2.name AS "sub_cluster",
+    aa.name AS "application",
+    substring(pb."recentComments" FROM 'Comment: (.*)') AS "recentComments"
+FROM apm_application_daps aad
+JOIN apm_applications aa
+    ON aa.id = aad.apm_application
+JOIN apm_subclusters as2
+    ON aa.apm_subcluster = as2.id
+JOIN dt_problems pb
+    ON pb.goldenapp_auid = aad.goldenapp_auid
+WHERE aa.id IN ($ApmApplication)
+  AND TO_TIMESTAMP(pb."startTime" / 1000)
       BETWEEN '${__from:date:YYYY-MM-DD}'
       AND '${__to:date:YYYY-MM-DD}'
-ORDER BY dt."startTime" DESC
+ORDER BY pb."startTime" DESC
 LIMIT 500;
