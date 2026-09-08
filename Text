@@ -1,17 +1,20 @@
-SELECT
-    as2.name AS "sub_cluster",
-    aa.name AS "application",
-    substring(pb."recentComments" FROM 'Comment: (.*)') AS "recentComments"
-FROM apm_application_daps aad
-JOIN apm_applications aa
-    ON aa.id = aad.apm_application
-JOIN apm_subclusters as2
-    ON aa.apm_subcluster = as2.id
-JOIN dt_problems pb
-    ON pb.goldenapp_auid = aad.goldenapp_auid
-WHERE aa.id IN ($ApmApplication)
-  AND TO_TIMESTAMP(pb."startTime" / 1000)
-      BETWEEN '${__from:date:YYYY-MM-DD}'
-      AND '${__to:date:YYYY-MM-DD}'
-ORDER BY pb."startTime" DESC
-LIMIT 500;
+select
+    dt.*,
+    array_to_string(
+        array(
+            select (regexp_matches(dt."recentComments", 'Comment:\s*(.*)', 'g'))[1]
+        ),
+        E'\n\n'
+    ) as "comments_only"
+from (
+    select as2.name as "sub_cluster", aa.name as "application", pb.*
+    from apm_application_daps aad
+    join apm_applications aa on aa.id = aad.apm_application
+    join apm_subclusters as2 on aa.apm_subcluster = as2.id
+    join dt_problems pb on pb.goldenapp_auid = aad.goldenapp_auid
+    where aa.id in ($ApmApplication)
+) dt
+where TO_TIMESTAMP(dt."startTime" / 1000)
+    between '${__from:date:YYYY-MM-DD}' and '${__to:date:YYYY-MM-DD}'
+order by dt."startTime" desc
+limit 500;
