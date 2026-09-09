@@ -1,50 +1,109 @@
-@Library('cibdbdbce-lib')_
+def _get_request_result(
+    self,
+    url,
+    headers,
+    keypair,
+    parser="values",
+    environment="prd",
+    region="emea",
+    fields=None
+):
+    pages = []
+    next_page_url = url
 
-// ---------------------------------------------------------------------------
-// getEnvironments() filters the database dropdown based on which Jenkins
-// instance is running the build, preventing cross-environment deployments.
-//
-// Dev Jenkins  URL contains  "cibdbdbce-dev-cibdbdbce"  → DEV, TEST, UAT only
-// Prod Jenkins URL contains  "cibdbdbce-aps-cibdbdbce"  → STG, PRD only
-// ---------------------------------------------------------------------------
-def getEnvironments() {
-    def ECOSYSTEM = "cibdbdbce"   // BUG FIX #1: was 'def ECOSYSTEM "cibdbdbce"' — missing '=' assignment operator
-    if (env.JENKINS_URL.contains(ECOSYSTEM.toLowerCase() + "-dev-" + ECOSYSTEM.toLowerCase()))
-        return ["DEV", "TEST", "UAT"]
-    if (env.JENKINS_URL.contains(ECOSYSTEM.toLowerCase() + "-aps-" + ECOSYSTEM.toLowerCase()))
-        return ["STG", "PRD"]
-    return []
-}
+    try:
+        while next_page_url:
 
-liquibasePipeline {
-    ecosystem           = 'pilothouse'
-    envList             = getEnvironments()
-    // INTEGRATION: envList is now populated by getEnvironments() instead of a
-    // hardcoded list, so the dropdown in the Jenkins UI automatically shows only
-    // the environments that are valid for this Jenkins instance.
-    // Previously it was: ['NONE','DEV','STAGING','PROD','Wasabi_DEV','Wasabi_STAGING','Wasabi_PROD']
-    // which exposed ALL environments on ALL Jenkins instances.
+            response = self.http_requests.request(
+                "GET",
+                next_page_url,
+                headers=headers,
+                verify=self.config.get_ca_cert(),
+                cert=keypair,
+                timeout=300
+            )
 
-    //agent             = 'rm-liquibase-new'
-    dbchangelogfile     = 'changelog.xml'
+            # ---------------------------------------------------------
+            # Successful response
+            # ---------------------------------------------------------
+            if response.status_code == 200:
 
-    dbCredentialMap     = [
-        DEV             : 'niowcis',
-        STAGING         : 'evcwef',
-        PROD            : 'prod_db_cred',
-        Wasabi_DEV      : 'wasabi_dev_cred',
-        Wasabi_STAGING  : 'wasabi_stg_cred',
-        Wasabi_PROD     : 'wasabi_prod_cred'
-    ]
+                response_json = response.json()
 
-    cyberarkCertFile    = 'cywcecle'
-    cyberarkKeyFile     = 'cybeccweile'
-    cyberarkCAFile      = 'cybeecewcCA'
-    cyberarkSafe        = 'IVececeOPSD'
-    cyberarkAppId       = 'cwecsBCE_DEV'
-    cyberarkCertFileProd= 'cyberarkCertFile'
-    cyberarkKeyFileProd = 'cyberarkKeyFile'
-    cyberarkAppIProd    = 'AcwescwD'
-    cyberarkSafeProd    = 'IV2ACIcewecwP'
-    emailto             = 'kausthubha.gajula@gmail.com'
-}
+                if parser is not None:
+                    data = response_json[parser]
+                else:
+                    data = response_json
+
+                page = pd.json_normalize(
+                    data,
+                    max_level=0
+                )
+
+                # Store the page.
+                # We concatenate all pages only once at the end.
+                pages.append(page)
+
+                # -----------------------------------------------------
+                # Pagination
+                # -----------------------------------------------------
+                next_page_key = response_json.get("nextPageKey")
+
+                if next_page_key:
+
+                    next_page_url = (
+                        url.split("?")[0]
+                        + "?nextPageKey="
+                        + next_page_key
+                    )
+
+                    # Problems API requires fields=recentComments
+                    # on every paginated request.
+                    if fields:
+                        next_page_url += f"&fields={fields}"
+
+                else:
+                    next_page_url = None
+
+            # ---------------------------------------------------------
+            # Unauthorized - refresh token and retry SAME page
+            # ---------------------------------------------------------
+            elif response.status_code == 401:
+
+                self.tokens.get(environment, {}).pop(region, None)
+
+                headers = {
+                    "Accept": "application/json",
+                    "Authorization": "Bearer "
+                    + self.get_api_token(
+                        environment=environment,
+                        region=region
+                    )
+                }
+
+                # Keep next_page_url unchanged.
+                # This retries the page that returned 401.
+                continue
+
+            # ---------------------------------------------------------
+            # Any other HTTP error
+            # ---------------------------------------------------------
+            else:
+                response.raise_for_status()
+
+        # -------------------------------------------------------------
+        # Concatenate all pages ONCE
+        # -------------------------------------------------------------
+        if pages:
+            return pd.concat(
+                pages,
+                ignore_index=True
+            )
+
+        return pd.DataFrame()
+
+    except Exception as error:
+        logging.warning("Request failed for URL: %s", url)
+        logging.debug(error)
+
+        return pd.DataFrame()
