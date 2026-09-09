@@ -200,18 +200,28 @@ select
 
     (
         select string_agg(
-            (c.comment_number || '. ' || c.comment_text),
+            c.comment_number || '. ' ||
+            regexp_replace(
+                c.comment_text,
+                '^Comment:\s*',
+                ''
+            ),
             E'\n\n\n'
             order by c.comment_number
         )
         from (
             select
-                row_number() over () as comment_number,
-                (regexp_matches(
-                    dt."recentComments",
-                    'Comment:\s*(.*)',
-                    'gn'
-                ))[1] as comment_text
+                row_number() over (
+                    order by ordinality
+                ) as comment_number,
+                line as comment_text
+
+            from regexp_split_to_table(
+                dt."recentComments",
+                E'\n'
+            ) with ordinality as x(line, ordinality)
+
+            where line ~ '^Comment:\s*'
         ) c
     ) as "comments_only"
 
@@ -235,4 +245,5 @@ where TO_TIMESTAMP(dt."startTime" / 1000)
     and '${__to:date:YYYY-MM-DD}'
 
 order by dt."startTime" desc
+
 limit 500;
