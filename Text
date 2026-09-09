@@ -32,3 +32,41 @@ where TO_TIMESTAMP(dt."startTime" / 1000)
     between '${__from:date:YYYY-MM-DD}' and '${__to:date:YYYY-MM-DD}'
 order by dt."startTime" desc
 limit 500;
+
+
+
+
+
+
+
+
+select
+    dt."sub_cluster",
+    dt."application",
+    dt."problem_id",
+    dt."display_id",
+    dt."startTime",
+    dt."endTime",
+    dt."status",
+    dt."affectedEntities"::text as "affectedEntities",
+    dt."impactedEntities"::text as "impactedEntities",
+    dt."rootCauseEntity"::text as "rootCauseEntity",
+    dt."managementZones"::text as "managementZones",
+    dt."entityTags"::text as "entityTags",
+    dt."goldenapp_auid",
+    dt."environment",
+    dt."region",
+    comment_match.match[1] as "comment"
+from (
+    select as2.name as "sub_cluster", aa.name as "application", pb.*
+    from apm_application_daps aad
+    join apm_applications aa on aa.id = aad.apm_application
+    join apm_subclusters as2 on aa.apm_subcluster = as2.id
+    join dt_problems pb on pb.goldenapp_auid = aad.goldenapp_auid
+    where aa.id in ($ApmApplication)
+) dt
+left join lateral regexp_matches(dt."recentComments", 'Comment:\s*(.*)', 'gn') as comment_match(match) on true
+where TO_TIMESTAMP(dt."startTime" / 1000)
+    between '${__from:date:YYYY-MM-DD}' and '${__to:date:YYYY-MM-DD}'
+order by dt."startTime" desc
+limit 500;
