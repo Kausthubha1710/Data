@@ -104,3 +104,22 @@ if "recentComments" in problems.columns:
     problems["recentComments"] = [
         self.format_recent_comments(value) for value in problems["recentComments"]
     ]
+
+
+
+
+
+
+def _get_request_result(self, url, headers, keypair, parser="values",
+                         environment="prd", region="emea", fields=None):
+    pages = self._iter_request_pages(
+        url=url, headers=headers, keypair=keypair, parser=parser,
+        environment=environment, region=region, fields=fields)
+
+    try:
+        first = next(pages)
+    except StopIteration:
+        return pd.DataFrame()
+
+    from itertools import chain
+    return pd.concat(chain([first], pages), ignore_index=True)
