@@ -1,5 +1,19 @@
 select
-    dt.*,
+    dt."sub_cluster",
+    dt."application",
+    dt."problem_id",
+    dt."display_id",
+    dt."startTime",
+    dt."endTime",
+    dt."status",
+    dt."affectedEntities"::text as "affectedEntities",
+    dt."impactedEntities"::text as "impactedEntities",
+    dt."rootCauseEntity"::text as "rootCauseEntity",
+    dt."managementZones"::text as "managementZones",
+    dt."entityTags"::text as "entityTags",
+    dt."goldenapp_auid",
+    dt."environment",
+    dt."region",
     array_to_string(
         array(
             select (regexp_matches(dt."recentComments", 'Comment:\s*(.*)', 'gn'))[1]
