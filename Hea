@@ -1,27 +1,6 @@
-package com.bnpparibas.mayback.config;
+As discussed, seems there is the issue with Grafana application, during the call QA score was more than 85% & post that for 2 of the changes it got changed to 70%.
+We have reviewed the change & now QA quality is more than 85% for change CHG1415474 & CHG1415462.
+Hence we are proceeding ahead with above mentioned changes.
+There is a python script called snow_quality.py which does dadataloader work to get data from servicenow and store it in database.
 
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.security.config.annotation.web.builders.HttpSecurity;
-import org.springframework.security.web.SecurityFilterChain;
-
-@Configuration
-public class SecurityConfig {
-
-    @Bean
-    SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
-
-        http
-            .authorizeHttpRequests(auth -> auth
-                // ✅ Allow Kubernetes probes
-                .requestMatchers("/actuator/health/**").permitAll()
-                .requestMatchers("/actuator/info").permitAll()
-
-                // everything else secured
-                .anyRequest().authenticated()
-            )
-            .csrf(csrf -> csrf.disable());
-
-        return http.build();
-    }
-}
+Don't know why suddenly the score is dropping and why and this is happen to only few tickets and i dont know the pattern. Help me find out the issue
