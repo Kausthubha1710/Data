@@ -4,3 +4,339 @@ Hence we are proceeding ahead with above mentioned changes.
 There is a python script called snow_quality.py which does dadataloader work to get data from servicenow and store it in database.
 
 Don't know why suddenly the score is dropping and why and this is happen to only few tickets and i dont know the pattern. Help me find out the issue
+
+
+
+
+
+
+import re
+from datetime import datetime, timezone, time, timedelta
+from nltk.tokenize import word_tokenize, sent_tokenize
+
+
+def get_sla_max_duration_seconds_by_priority(priority: str):
+    p_score = int(priority[0])
+
+    # SLA duration in seconds for 1 - Critical : 2 hours 24/7 : https://bnpp.service-now.com/contract_sla.do?sys_id=02ad3fe9db055c1003ee4dc2ba9619df
+    if p_score == 1:
+        return 2 * 3600
+
+    # SLA duration in seconds for 2 - High : 4 hours 24/7 : https://bnpp.service-now.com/contract_sla.do?sys_id=49df3f2ddb055c1003ee4dc2ba961915
+    if p_score == 2:
+        return 4 * 3600
+
+    # SLA duration in seconds for 3 - Moderate : 8 working hours 8-18 : https://bnpp.service-now.com/contract_sla.do?sys_id=8800c83ddb055c1003ee4dc2ba961929
+    if p_score == 3:
+        return 1 * 10 * 3600
+
+    # SLA duration in seconds for 4 - Low : 3 working days 8-18 : https://bnpp.service-now.com/contract_sla.do?sys_id=b810807ddb055c1003ee4dc2ba9619fd
+    if p_score == 4:
+        return 3 * 10 * 3600
+
+    # SLA duration in seconds for 5 - Very Low : 7 working days 8-18 : https://bnpp.service-now.com/contract_sla.do?sys_id=3Dc020cc3ddb055c1003ee4dc2ba9619f9
+    if p_score == 5:
+        return 7 * 10 * 3600
+
+
+def calculate_sla_usage(priority: str, sla_duration: int):
+    return round(sla_duration / get_sla_max_duration_seconds_by_priority(priority=priority), 2) * 100
+
+
+def calculate_business_duration(priority: str, start: datetime, end: datetime = datetime.now(timezone.utc)):
+    p_score = int(priority[0])
+
+    duration = (end - start).total_seconds()
+    # return duration for 24/7 SLA support
+    if p_score < 3:
+        return duration
+
+    # Convert to hours
+    diff_hours = duration / 3600
+
+    # Define working hours and days of week
+    bday_start_time = time(8, 0)
+    bday_end_time = time(18, 0)
+    bday_work_days = [0, 1, 2, 3, 4]
+
+    # calculate the difference
+    work_hours = 0
+    start_hour, start_minute, _ = start.time().hour, start.time().minute, start.time().second
+    start_copy = start
+    while start_copy <= end:
+        if start_copy.weekday() in bday_work_days and bday_start_time <= start_copy.time() < bday_end_time:
+            work_hours += (bday_end_time - start_copy.time()).seconds / 3600 + (bday_end_time - start_copy.time()).days * 8
+            break
+
+        start_copy += timedelta(hours=1)
+        start_hour, start_minute, _ = start_copy.time().hour, start_copy.time().minute, start_copy.time().second
+
+    return (diff_hours - (diff_hours - work_hours)) * 3600
+
+
+def evaluate_text_field(
+    content: str,
+    text_length: int = 5,
+    violation_comment: str = "Invalid field",
+    scoring_value: int = 1,
+    regex_match: str = ".*",
+    word_counter: int = 1,
+    diff_from: str = None,
+    contains_list: list[str] = None,
+    descriptive_keywords=None,
+    sen_counter: int = 1,
+    rule: str = None,
+):
+    score = scoring_value
+    match = None
+
+    if content is None or content == "" or not (isinstance(content, str)):
+        score += -(scoring_value)
+        violation_comment = violation_comment + " - This field cannot be empty"
+    else:
+        if len(content) < text_length:
+            score += -1
+            violation_comment = violation_comment + " - Not matching the minimum length"
+        match = re.search(regex_match, content)
+        if match is None:
+            score += -1
+            violation_comment = violation_comment + " - Not matching pattern validation"
+
+        if diff_from is not None and content.upper() == diff_from.upper():
+            score += -1
+            violation_comment = violation_comment + " - Is matching exclusion value"
+
+        if contains_list is not None:
+            for contains in contains_list:
+                if contains is not None and contains.upper() not in content.upper():
+                    score += -1
+                    violation_comment = violation_comment + " - Missing data: " + contains
+
+        # Analyze textual complexity using tokenization
+        if word_counter > 1:
+            # Tokenize the content
+            tokens = word_tokenize(content.strip())
+            token_count = len(tokens)
+            unique_tokens = set(tokens)
+            unique_token_count = len(unique_tokens)
+
+            if token_count < word_counter:
+                score += -1
+                violation_comment = violation_comment + " - Not matching the minimum token count"
+
+            redundancy_ratio = unique_token_count / token_count if token_count > 0 else 0
+            if redundancy_ratio < 0.5:
+                score += -1
+                violation_comment = violation_comment + " - Text is too redundant"
+
+            if unique_token_count < word_counter:
+                score += -1
+                violation_comment = violation_comment + " - Unique token count is not matching the minimum token count"
+
+            if descriptive_keywords:
+                if not any(token in descriptive_keywords for token in unique_tokens):
+                    score += -1
+                    violation_comment = violation_comment + " - Missing some mandatory keywords"
+
+        if sen_counter > 1:
+            sen_token = sent_tokenize(content.strip())
+            sen_token_count = len(sen_token)
+            sen_unique_tokens = set(sen_token)
+            sen_unique_token_count = len(sen_unique_tokens)
+
+            redundancy_ratio = sen_unique_token_count / sen_token_count if sen_token_count > 0 else 0
+            if redundancy_ratio < 0.5:
+                score += -1
+                violation_comment = violation_comment + " - Text is too redundant"
+
+            if sen_unique_token_count < sen_counter:
+                score += -1
+                violation_comment = violation_comment + " - Minium sentence token count is not matching the minimum requirements"
+
+    if score == scoring_value:
+        return {"score": scoring_value, "violations": None, "match": match, "rule": rule}
+    else:
+        return {"score": max(0, score), "violations": violation_comment, "match": match, "rule": rule}
+
+
+def evaluate_date_field(
+    content: datetime,
+    violation_comment: str = "Invalid field",
+    scoring_value: int = 1,
+    rule: str = None,
+):
+    score = scoring_value
+
+    if content is None:
+        score = 0
+        violation_comment = violation_comment + " - This field cannot be empty"
+
+    if score == 0:
+        return {"score": score, "violations": violation_comment, "match": None, "rule": rule}
+    else:
+        return {"score": score, "violations": None, "match": None, "rule": rule}
+
+
+def check_all_questions_answered(text, questions):
+    if not isinstance(text, str):
+        return False, questions
+
+    def strip_punctuation(s):
+        s = re.sub(r"<[^>]*>", "", s)
+        s = re.sub(r"[^\w\s]", "", s.lower())
+        return s.strip()
+
+    text_normalized = strip_punctuation(text)
+    questions_normalized = [strip_punctuation(q) for q in questions]
+
+    missing_questions = [
+        q for q, q_norm in zip(questions, questions_normalized)
+        if q_norm not in text_normalized
+    ]
+
+    text_without_questions = text_normalized
+    for q_norm in questions_normalized:
+        text_without_questions = text_without_questions.replace(q_norm, "")
+
+    alnum_count = len(re.findall(r"\w", text_without_questions))
+    is_valid = (len(missing_questions) == 0) and (alnum_count >= 2)
+    return is_valid, missing_questions
+
+
+def match_type(filename):
+    matched = {}
+    if re.search(r"implementation\s*[-_ ]?\s*plan", filename) or re.search(r"migration\s*[-_ ]?\s*plan", filename):
+        matched["Implementation_Plan_or_Migration_Plan"] = filename
+
+    if re.search(r"test\s*[-_ ]?\s*plan", filename) or (re.search(r"pre\s*[-_ ]?\s*test", filename) and re.search(r"post\s*[-_ ]?\s*test", filename)):
+        matched["Test_Plan_or_PrePost_Test_Plan"] = filename
+
+    if re.search(r"testing\s*[-_ ]?\s*sign\s*[-_ ]?\s*off", filename) or re.search(r"tso\s*[-_ ]?", filename) or re.search(r"test\s*[-_ ]?\s*sign\s*[-_ ]?\s*off", filename):
+        matched["Testing_SignOff_or_TSO"] = filename
+
+    if re.search(r"uso\s*[-_ ]?", filename) or re.search(r"uat\s*[-_ ]?", filename) or re.search(r"user\s*[-_ ]?\s*sign\s*[-_ ]?\s*off", filename):
+        matched["USO_or_UAT"] = filename
+
+    if re.search(r"technical\s*[-_ ]?", filename) or re.search(r"staging\s*[-_ ]?", filename) or re.search(r"stg\s*[-_ ]?", filename):
+        matched["Technical_signoff_or_Staging_signoff"] = filename
+
+    if re.search(r"backout\s*[-_ ]?\s*plan", filename) or re.search(r"rollback\s*[-_ ]?\s*plan", filename):
+        matched["Backout_Plan_or_Rollback_Plan"] = filename
+
+    if re.search(r"code\s*[-_ ]?\s*review", filename) or re.search(r"peer\s*[-_ ]?\s*review", filename):
+        matched["Code_Review_or_Peer_Review"] = filename
+
+    if re.search(r"go\s*[-_ ]?\s*no\s*[-_ ]?\s*go", filename):
+        matched["Go_No_Go"] = filename
+
+    if re.search(r"derogation", filename):
+        matched["Derogation"] = filename
+
+    return matched
+
+
+def check_attachment_rules(matches, change_type):
+    missing = []
+    if not ("Implementation_Plan_or_Migration_Plan" in matches):
+        missing.append("Implementation_Plan_or_Migration_Plan")
+    if not ("Test_Plan_or_PrePost_Test_Plan" in matches):
+        missing.append("Test_Plan_or_PrePost_Test_Plan")
+    if not ("Testing_SignOff_or_TSO" in matches):
+        missing.append("Testing_SignOff_or_TSO")
+    if not ("USO_or_UAT" in matches):
+        missing.append("USO_or_UAT")
+    if not ("Technical_signoff_or_Staging_signoff" in matches):
+        missing.append("Technical_signoff_or_Staging_signoff")
+    if not ("Backout_Plan_or_Rollback_Plan" in matches):
+        missing.append("Backout_Plan_or_Rollback_Plan")
+    if not ("Code_Review_or_Peer_Review" in matches):
+        missing.append("Code_Review_or_Peer_Review")
+    if not ("Go_No_Go" in matches):
+        missing.append("Go_No_Go")
+    if change_type.lower() == "emergency" and "Derogation" not in matches:
+        missing.append("Derogation")
+    return ", ".join(missing) if missing else ""
+
+
+def has_keyword_with_details(text, keywords):
+    return any(re.search(rf"\b{kw}\b", text) and len(re.findall(r"\w", re.sub(rf"\b{kw}\b", "", text))) >= 2 for kw in keywords)
+
+
+def score_required_answers(primary_field_name, primary_field, required_keywords, score_per_field=1, fallback_field_name=None, fallback_field=None):
+    primary_field_text = primary_field or ""
+    fallback_field_text = (fallback_field or "") if fallback_field else ""
+    total_score = 0
+    messages = []
+    for keyword in required_keywords:
+        pattern = rf"(?i){re.escape(keyword)}\s*(.*)"
+        match = re.search(pattern, primary_field_text, re.IGNORECASE | re.DOTALL)
+        if match:
+            answer = match.group(1).strip()
+            if len(re.findall(r"\w", answer)) >= 2:
+                total_score += score_per_field
+            else:
+                messages.append(f"{primary_field_name} is missing data for keyword '{keyword}'")
+        else:
+            if fallback_field:
+                match_fb = re.search(pattern, fallback_field_text, re.IGNORECASE | re.DOTALL)
+                if match_fb:
+                    answer = match_fb.group(1).strip()
+                    if len(re.findall(r"\w", answer)) >= 2:
+                        total_score += score_per_field
+                    else:
+                        messages.append(f"{fallback_field_name} is missing data for keyword '{keyword}'")
+                else:
+                    messages.append(f"Both {primary_field_name} and {fallback_field_name} missing keyword '{keyword}'")
+            else:
+                messages.append(f"{primary_field_name} is missing keyword '{keyword}'")
+    return total_score, messages
+
+
+CCB_SIGNOFF_RULES = {
+    "uat": {
+        "attachment_col": ["USO_or_UAT"],
+        "required_if": lambda row: True
+    },
+    "staging": {
+        "attachment_col": ["Technical_signoff_or_Staging_signoff"],
+        "required_if": lambda row: True
+    },
+    "technical": {
+        "attachment_col": ["Technical_signoff_or_Staging_signoff"],
+        "required_if": lambda row: True
+    },
+    "implementation": {
+        "attachment_col": ["Implementation_Plan_or_Migration_Plan"],
+        "required_if": lambda row: True
+    },
+    "testplan": {
+        "attachment_col": ["Test_Plan_or_PrePost_Test_Plan"],
+        "required_if": lambda row: True
+    },
+    "rollback": {
+        "attachment_col": ["Backout_Plan_or_Rollback_Plan"],
+        "required_if": lambda row: True
+    },
+    "perf": {
+        "attachment_col": ["Testing_SignOff_or_TSO"],
+        "required_if": lambda row: row["risk"].lower() == "high"
+    },
+    "gonogo": {
+        "attachment_col": ["Go_No_Go"],
+        "required_if": lambda row: True
+    },
+    "codereview": {
+        "attachment_col": ["Code_Review_or_Peer_Review"],
+        "required_if": lambda row: True
+    }
+}
+
+
+def score_validator(rules: dict) -> None:
+    total = 0
+    for rule_id, rule_info in rules.items():
+        score = rule_info.get("score", 0)
+        total += score
+    if total != 100:
+        raise ValueError(f"Total qa score must be 100. Current total is {total}")
+
