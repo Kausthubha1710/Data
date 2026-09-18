@@ -1,0 +1,11 @@
+This is a 504 Gateway Timeout, which is an infrastructure/network issue — not a code bug or query error in the usual sense.
+What it means: The nginx server (visible at the bottom of the error page) tried to forward your request to a backend server, but that backend took too long to respond, so nginx gave up and returned this error to your browser.
+What's NOT the cause:
+The ruxitagentjs script tag is Dynatrace RUM (Real User Monitoring) instrumentation — it's just injected for monitoring/analytics, unrelated to the actual failure.
+It's not a SQL/query syntax error or application code exception — those would show a different error (stack trace, 500 error, etc.)
+Likely causes of a 504:
+The backend service/API was overloaded, hung, or crashed
+A slow database query or long-running process that exceeded nginx's timeout setting
+Backend service was down or restarting
+Network/connectivity issue between nginx and the upstream server
+Given this looks like it's on the cib.echonet / dynatemea-rum.cib.echonet domain — is this related to your Dynatrace-Postgres sync pipeline work, or a different service you were hitting? That would help narrow down which backend is timing out.
