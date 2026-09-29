@@ -1,10 +1,185 @@
-IF '${payload.uat_signoff}' IN ('SUCCESS', 'NOT_APPLICABLE')
-   AND EXISTS (
+-- Keep everything above unchanged (SET SESSION ... and INSERT INTO sn_changes_ccb ... ON CONFLICT ...;)
+-- Replace from "DO $$" to "END $$;" with the block below.
+-- Rules per sign-off:
+--   NOT_APPLICABLE or FAILURE                                    -> original behaviour: payload score + override 'yes'
+--   SUCCESS + a file of that type containing the change number  -> payload score + override 'yes'
+--   SUCCESS without such a file                                 -> nothing written
+
+DO $$
+BEGIN
+
+-- UAT
+IF '${payload.uat_signoff}' IN ('NOT_APPLICABLE', 'FAILURE')
+   OR ('${payload.uat_signoff}' = 'SUCCESS' AND EXISTS (
      SELECT 1 FROM sn_attachments a
      WHERE a.table_name = 'change request'
        AND a.table_sys_id = '${payload.sys_id}'
        AND a.file_name ILIKE '%${payload.number}%'
        AND a.file_name ~* 'uso|uat|user\s*[-_ ]?\s*sign\s*[-_ ]?\s*off'
-   ) THEN
-  -- your existing UPDATE and INSERT stay exactly as they are
+   )) THEN
+  UPDATE sn_changes_rules_score
+  SET score = ${payload.uat_signoff_score}, violation = ''
+  WHERE sys_id = '${payload.sys_id}' AND rule_id = ${payload.uat_signoff_rule_id};
+
+  INSERT INTO sn_changes_rules_score_override (sys_id, number, rule_id, override, updated_at, updated_by)
+  VALUES ('${payload.sys_id}', '${payload.number}', '${payload.uat_signoff_rule_id}', 'yes', now(), '${payload.CurrentUserId}')
+  ON CONFLICT (sys_id, rule_id) DO UPDATE
+  SET number = '${payload.number}', override = 'yes', updated_at = now(), updated_by = '${payload.CurrentUserId}';
 END IF;
+
+-- Performance / Testing
+IF '${payload.perf_signoff}' IN ('NOT_APPLICABLE', 'FAILURE')
+   OR ('${payload.perf_signoff}' = 'SUCCESS' AND EXISTS (
+     SELECT 1 FROM sn_attachments a
+     WHERE a.table_name = 'change request'
+       AND a.table_sys_id = '${payload.sys_id}'
+       AND a.file_name ILIKE '%${payload.number}%'
+       AND a.file_name ~* 'testing\s*[-_ ]?\s*sign\s*[-_ ]?\s*off|tso|test\s*[-_ ]?\s*sign\s*[-_ ]?\s*off'
+   )) THEN
+  UPDATE sn_changes_rules_score
+  SET score = ${payload.perf_signoff_score}, violation = ''
+  WHERE sys_id = '${payload.sys_id}' AND rule_id = ${payload.perf_signoff_rule_id};
+
+  INSERT INTO sn_changes_rules_score_override (sys_id, number, rule_id, override, updated_at, updated_by)
+  VALUES ('${payload.sys_id}', '${payload.number}', '${payload.perf_signoff_rule_id}', 'yes', now(), '${payload.CurrentUserId}')
+  ON CONFLICT (sys_id, rule_id) DO UPDATE
+  SET number = '${payload.number}', override = 'yes', updated_at = now(), updated_by = '${payload.CurrentUserId}';
+END IF;
+
+-- Staging
+IF '${payload.staging_signoff}' IN ('NOT_APPLICABLE', 'FAILURE')
+   OR ('${payload.staging_signoff}' = 'SUCCESS' AND EXISTS (
+     SELECT 1 FROM sn_attachments a
+     WHERE a.table_name = 'change request'
+       AND a.table_sys_id = '${payload.sys_id}'
+       AND a.file_name ILIKE '%${payload.number}%'
+       AND a.file_name ~* 'staging|stg'
+   )) THEN
+  UPDATE sn_changes_rules_score
+  SET score = ${payload.staging_signoff_score}, violation = ''
+  WHERE sys_id = '${payload.sys_id}' AND rule_id IN (${payload.staging_signoff_rule_id});
+
+  INSERT INTO sn_changes_rules_score_override (sys_id, number, rule_id, override, updated_at, updated_by)
+  VALUES ('${payload.sys_id}', '${payload.number}', '${payload.staging_signoff_rule_id}', 'yes', now(), '${payload.CurrentUserId}')
+  ON CONFLICT (sys_id, rule_id) DO UPDATE
+  SET number = '${payload.number}', override = 'yes', updated_at = now(), updated_by = '${payload.CurrentUserId}';
+END IF;
+
+-- Rollback
+IF '${payload.rollback_signoff}' IN ('NOT_APPLICABLE', 'FAILURE')
+   OR ('${payload.rollback_signoff}' = 'SUCCESS' AND EXISTS (
+     SELECT 1 FROM sn_attachments a
+     WHERE a.table_name = 'change request'
+       AND a.table_sys_id = '${payload.sys_id}'
+       AND a.file_name ILIKE '%${payload.number}%'
+       AND a.file_name ~* '(backout|rollback)\s*[-_ ]?\s*plan'
+   )) THEN
+  UPDATE sn_changes_rules_score
+  SET score = ${payload.rollback_signoff_score}, violation = ''
+  WHERE sys_id = '${payload.sys_id}' AND rule_id = ${payload.rollback_signoff_rule_id};
+
+  INSERT INTO sn_changes_rules_score_override (sys_id, number, rule_id, override, updated_at, updated_by)
+  VALUES ('${payload.sys_id}', '${payload.number}', '${payload.rollback_signoff_rule_id}', 'yes', now(), '${payload.CurrentUserId}')
+  ON CONFLICT (sys_id, rule_id) DO UPDATE
+  SET number = '${payload.number}', override = 'yes', updated_at = now(), updated_by = '${payload.CurrentUserId}';
+END IF;
+
+-- Go / No Go
+IF '${payload.gonogo_signoff}' IN ('NOT_APPLICABLE', 'FAILURE')
+   OR ('${payload.gonogo_signoff}' = 'SUCCESS' AND EXISTS (
+     SELECT 1 FROM sn_attachments a
+     WHERE a.table_name = 'change request'
+       AND a.table_sys_id = '${payload.sys_id}'
+       AND a.file_name ILIKE '%${payload.number}%'
+       AND a.file_name ~* 'go\s*[-_ ]?\s*no\s*[-_ ]?\s*go'
+   )) THEN
+  UPDATE sn_changes_rules_score
+  SET score = ${payload.gonogo_signoff_score}, violation = ''
+  WHERE sys_id = '${payload.sys_id}' AND rule_id = ${payload.gonogo_signoff_rule_id};
+
+  INSERT INTO sn_changes_rules_score_override (sys_id, number, rule_id, override, updated_at, updated_by)
+  VALUES ('${payload.sys_id}', '${payload.number}', '${payload.gonogo_signoff_rule_id}', 'yes', now(), '${payload.CurrentUserId}')
+  ON CONFLICT (sys_id, rule_id) DO UPDATE
+  SET number = '${payload.number}', override = 'yes', updated_at = now(), updated_by = '${payload.CurrentUserId}';
+END IF;
+
+-- Code Review
+IF '${payload.codereview_signoff}' IN ('NOT_APPLICABLE', 'FAILURE')
+   OR ('${payload.codereview_signoff}' = 'SUCCESS' AND EXISTS (
+     SELECT 1 FROM sn_attachments a
+     WHERE a.table_name = 'change request'
+       AND a.table_sys_id = '${payload.sys_id}'
+       AND a.file_name ILIKE '%${payload.number}%'
+       AND a.file_name ~* '(code|peer)\s*[-_ ]?\s*review'
+   )) THEN
+  UPDATE sn_changes_rules_score
+  SET score = ${payload.codereview_signoff_score}, violation = ''
+  WHERE sys_id = '${payload.sys_id}' AND rule_id = ${payload.codereview_signoff_rule_id};
+
+  INSERT INTO sn_changes_rules_score_override (sys_id, number, rule_id, override, updated_at, updated_by)
+  VALUES ('${payload.sys_id}', '${payload.number}', '${payload.codereview_signoff_rule_id}', 'yes', now(), '${payload.CurrentUserId}')
+  ON CONFLICT (sys_id, rule_id) DO UPDATE
+  SET number = '${payload.number}', override = 'yes', updated_at = now(), updated_by = '${payload.CurrentUserId}';
+END IF;
+
+-- Implementation
+IF '${payload.implementation_signoff}' IN ('NOT_APPLICABLE', 'FAILURE')
+   OR ('${payload.implementation_signoff}' = 'SUCCESS' AND EXISTS (
+     SELECT 1 FROM sn_attachments a
+     WHERE a.table_name = 'change request'
+       AND a.table_sys_id = '${payload.sys_id}'
+       AND a.file_name ILIKE '%${payload.number}%'
+       AND a.file_name ~* 'implementation\s*-?\s*plan|migration'
+   )) THEN
+  UPDATE sn_changes_rules_score
+  SET score = ${payload.implementation_signoff_score}, violation = ''
+  WHERE sys_id = '${payload.sys_id}' AND rule_id IN (${payload.implementation_signoff_rule_id});
+
+  INSERT INTO sn_changes_rules_score_override (sys_id, number, rule_id, override, updated_at, updated_by)
+  VALUES ('${payload.sys_id}', '${payload.number}', '${payload.implementation_signoff_rule_id}', 'yes', now(), '${payload.CurrentUserId}')
+  ON CONFLICT (sys_id, rule_id) DO UPDATE
+  SET number = '${payload.number}', override = 'yes', updated_at = now(), updated_by = '${payload.CurrentUserId}';
+END IF;
+
+-- Test Plan
+IF '${payload.testplan_signoff}' IN ('NOT_APPLICABLE', 'FAILURE')
+   OR ('${payload.testplan_signoff}' = 'SUCCESS' AND EXISTS (
+     SELECT 1 FROM sn_attachments a
+     WHERE a.table_name = 'change request'
+       AND a.table_sys_id = '${payload.sys_id}'
+       AND a.file_name ILIKE '%${payload.number}%'
+       AND a.file_name ~* 'test\s*[-_ ]?\s*plan'
+   )) THEN
+  UPDATE sn_changes_rules_score
+  SET score = ${payload.testplan_signoff_score}, violation = ''
+  WHERE sys_id = '${payload.sys_id}' AND rule_id IN (${payload.testplan_signoff_rule_id});
+
+  INSERT INTO sn_changes_rules_score_override (sys_id, number, rule_id, override, updated_at, updated_by)
+  VALUES ('${payload.sys_id}', '${payload.number}', '${payload.testplan_signoff_rule_id}', 'yes', now(), '${payload.CurrentUserId}')
+  ON CONFLICT (sys_id, rule_id) DO UPDATE
+  SET number = '${payload.number}', override = 'yes', updated_at = now(), updated_by = '${payload.CurrentUserId}';
+END IF;
+
+-- Technical
+-- NOTE: your original block used staging_signoff_score / staging_signoff_rule_id here.
+-- This version uses technical_signoff_score / technical_signoff_rule_id.
+-- Make sure those two payload fields exist in the panel.
+IF '${payload.technical_signoff}' IN ('NOT_APPLICABLE', 'FAILURE')
+   OR ('${payload.technical_signoff}' = 'SUCCESS' AND EXISTS (
+     SELECT 1 FROM sn_attachments a
+     WHERE a.table_name = 'change request'
+       AND a.table_sys_id = '${payload.sys_id}'
+       AND a.file_name ILIKE '%${payload.number}%'
+       AND a.file_name ~* 'technical|staging|stg'
+   )) THEN
+  UPDATE sn_changes_rules_score
+  SET score = ${payload.technical_signoff_score}, violation = ''
+  WHERE sys_id = '${payload.sys_id}' AND rule_id IN (${payload.technical_signoff_rule_id});
+
+  INSERT INTO sn_changes_rules_score_override (sys_id, number, rule_id, override, updated_at, updated_by)
+  VALUES ('${payload.sys_id}', '${payload.number}', '${payload.technical_signoff_rule_id}', 'yes', now(), '${payload.CurrentUserId}')
+  ON CONFLICT (sys_id, rule_id) DO UPDATE
+  SET number = '${payload.number}', override = 'yes', updated_at = now(), updated_by = '${payload.CurrentUserId}';
+END IF;
+
+END $$;
