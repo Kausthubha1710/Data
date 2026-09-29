@@ -1,0 +1,10 @@
+IF '${payload.uat_signoff}' IN ('SUCCESS', 'NOT_APPLICABLE')
+   AND EXISTS (
+     SELECT 1 FROM sn_attachments a
+     WHERE a.table_name = 'change request'
+       AND a.table_sys_id = '${payload.sys_id}'
+       AND a.file_name ILIKE '%${payload.number}%'
+       AND a.file_name ~* 'uso|uat|user\s*[-_ ]?\s*sign\s*[-_ ]?\s*off'
+   ) THEN
+  -- your existing UPDATE and INSERT stay exactly as they are
+END IF;
