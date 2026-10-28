@@ -25,3 +25,11 @@ curl --noproxy '*' -s -i http://127.0.0.1:3080/v1/messages \
   -H "x-api-key: $KEY" -H "anthropic-version: 2023-06-01" \
   -H "content-type: application/json" \
   -d '{"model":"qwen-latest","max_tokens":20,"messages":[{"role":"user","content":"hi"}]}'
+
+
+
+export PTOKEN='<current proxyAuthToken>'
+curl --noproxy '*' -s http://127.0.0.1:3080/v1/messages \
+  -H "x-api-key: $PTOKEN" -H "anthropic-version: 2023-06-01" \
+  -H "content-type: application/json" \
+  -d '{"model":"qwen-latest","max_tokens":20,"messages":[{"role":"user","content":"hi"}]}'
