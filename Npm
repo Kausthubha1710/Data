@@ -38,3 +38,12 @@ curl --noproxy '*' -s http://127.0.0.1:3080/v1/messages \
 
 env | grep -i anthropic
 grep -n -i -E 'auth_token|anthropic' ~/.claude/settings.json ~/.bashrc ~/.profile 2>/dev/null
+
+
+
+tr '\0' '\n' < /proc/329099/environ | grep -i proxy
+
+kill 329099; sleep 2
+env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u all_proxy claude
+
+grep -i -E 'error|proxy|ECONN|403|500' /home/h59281/.claude/debug/*.txt | tail -20
