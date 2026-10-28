@@ -20,3 +20,8 @@ curl --noproxy '*' -s -o /dev/null -w "%{http_code}\n" \
   -H "Authorization: Bearer $KEY"
 
 "NO_PROXY": "127.0.0.1,localhost,api.llm.cib.echonet"
+
+curl --noproxy '*' -s -i http://127.0.0.1:3080/v1/messages \
+  -H "x-api-key: $KEY" -H "anthropic-version: 2023-06-01" \
+  -H "content-type: application/json" \
+  -d '{"model":"qwen-latest","max_tokens":20,"messages":[{"role":"user","content":"hi"}]}'
