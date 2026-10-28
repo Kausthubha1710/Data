@@ -47,3 +47,14 @@ kill 329099; sleep 2
 env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u all_proxy claude
 
 grep -i -E 'error|proxy|ECONN|403|500' /home/h59281/.claude/debug/*.txt | tail -20
+
+
+TOKEN=$(grep -oP '"ANTHROPIC_AUTH_TOKEN":\s*"\K[^"]+' ~/.claude/settings.json)
+curl --noproxy '*' -s -i http://127.0.0.1:3080/v1/messages \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "anthropic-version: 2023-06-01" -H "content-type: application/json" \
+  -d '{"model":"qwen-latest","max_tokens":20,"messages":[{"role":"user","content":"hi"}]}'
+
+cat ~/.local/bin/claude-adapter.sh
+
+tail -50 <log path from the script>
