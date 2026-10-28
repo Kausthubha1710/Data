@@ -58,3 +58,6 @@ curl --noproxy '*' -s -i http://127.0.0.1:3080/v1/messages \
 cat ~/.local/bin/claude-adapter.sh
 
 tail -50 <log path from the script>
+
+
+node -e "fetch('https://api.llm.cib.echonet/v1/openai/models').then(r=>console.log('status',r.status)).catch(e=>console.log('ERR',e.cause&&e.cause.code))"
