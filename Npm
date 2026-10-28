@@ -8,3 +8,15 @@ curl -s -o /dev/null -w "%{http_code}\n" \
   -x "$HTTPS_PROXY" \
   https://api.llm.cib.echonet/v1/openai/models \
   -H "Authorization: Bearer $KEY"
+
+
+env | grep -i proxy
+grep -i proxy ~/.claude/settings.json .claude/settings*.json 2>/dev/null
+
+curl --noproxy '*' -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3080/
+
+curl --noproxy '*' -s -o /dev/null -w "%{http_code}\n" \
+  https://api.llm.cib.echonet/v1/openai/models \
+  -H "Authorization: Bearer $KEY"
+
+"NO_PROXY": "127.0.0.1,localhost,api.llm.cib.echonet"
