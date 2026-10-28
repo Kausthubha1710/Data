@@ -2,3 +2,9 @@ curl -sS -L -u "$ARTIFACTORY_USERNAME:$ARTIFACTORY_PASSWORD" \
   -o /tmp/nvm_install.sh \
   -w "\nHTTP Status: %{http_code}\n" \
   "https://artifactory.cib.echonet/artifactory/github-generic-remote-cache/nvm-sh/nvm/archive/refs/tags/v0.40.3.zip%21/nvm-0.40.3/install.sh"
+
+
+curl -s -o /dev/null -w "%{http_code}\n" \
+  -x "$HTTPS_PROXY" \
+  https://api.llm.cib.echonet/v1/openai/models \
+  -H "Authorization: Bearer $KEY"
