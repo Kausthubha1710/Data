@@ -61,3 +61,7 @@ tail -50 <log path from the script>
 
 
 node -e "fetch('https://api.llm.cib.echonet/v1/openai/models').then(r=>console.log('status',r.status)).catch(e=>console.log('ERR',e.cause&&e.cause.code))"
+
+
+export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
+node -e "fetch('https://api.llm.cib.echonet/v1/openai/models').then(r=>console.log('status',r.status)).catch(e=>console.log('ERR',e.cause&&e.cause.code))"
