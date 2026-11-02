@@ -1,0 +1,11 @@
+Take max(sys_updated) from rules score table which doesnt have entry for a ticket whose rule 28 is violating.
+
+Suppose a ticket violated at 2pm on 29th oct and job ran on 11pm of 29th oct then max sys_updated is 2pm of 29th oct. 
+
+On 30th oct tickets closed at 1pm,2pm,3pm (which are delayed) job runs at 11pm of 30th oct then max(sys_updated_on) should be 2pm of 29th oct because that is the max sys_updated_on in rules score table. 
+
+So window is select changes from sn_changes table where sys_updated_on > 2pm 29th oct. 
+Then all the 1pm,2pm,3pm tickets rows will be entered into sn_changes_rules_score table.
+
+Why is only 3pm one considered? Why isn't 1pm, 2pm rows getting entered into rules score table? Why is 3pm 30th oct is considered for max sys_updated on instead of 2pm 29th oct?
+2pm 29th oct should be last sync right as per logic?
